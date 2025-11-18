@@ -11,3 +11,4 @@ echo ""
 sudo service udev reload --reload-rules 
 sudo service udev restart
 echo "finish "
+echo "<=== ! Please physical reconnect your device to computer ! ===>"

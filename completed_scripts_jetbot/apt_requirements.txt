@@ -1,1 +1,2 @@
-ros-foxy-realsense2-camera
+ros-galactic-realsense2-camera
+ros-galactic-slam-toolbox
