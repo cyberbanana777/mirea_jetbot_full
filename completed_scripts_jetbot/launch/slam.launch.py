@@ -122,8 +122,8 @@ def launch_setup(context, *args, **kwargs):
             {'use_sim_time': LaunchConfiguration('use_sim_time')}
         ],
         remappings=[
-            ('/scan', '/scan'),        # убедись, что твой топик называется так
-            ('/odom', '/odom')         # убедись, что odometry публикуется здесь
+            ('/scan', '/scan'),
+            ('/odom', '/odom'),
         ]
     )
 
@@ -132,10 +132,10 @@ def launch_setup(context, *args, **kwargs):
         jetbos_mirea_description_launch,
         sllidar_launch,
         change_env,
-        # camera_launch,
+        camera_launch,
         transform_node,
-        rviz_node,
-        slam_node,
+        # rviz_node,
+        # slam_node,
 
     ]
 

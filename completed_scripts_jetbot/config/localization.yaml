@@ -1,0 +1,24 @@
+slam_toolbox:
+  ros__parameters:
+    # Режим работы
+    mode: localization
+    
+    # Путь к карте
+    map_file_name: "/home/ubuntu/ros2_ws/maps/my_map"
+
+    # Основные фреймы
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+
+    # Топики данных
+    scan_topic: /ldlidar_node/scan
+    odom_topic: /odom
+    
+    # Настройки локализации
+    resolution: 0.05
+    transform_publish_period: 0.02
+    transform_timeout: 0.2
+    stack_size_to_use: 40000000
+    enable_interactive_mode: true
+    use_scan_matching: true

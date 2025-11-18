@@ -1,0 +1,66 @@
+
+slam_toolbox:
+  ros__parameters:
+
+    # Названия фреймов и топика лидара
+    scan_topic: /ldlidar_node/scan # Топик с лазерными сканами
+    odom_frame: odom               # Кадр одометрии (обычно "odom")
+    map_frame: map                 # Глобальный фрейм карты
+    base_frame: base_link          # Фрейм робота (лидара)
+
+    # Режим работы SLAM Toolbox
+    mode: mapping                  # Режим построения карты (localization — для использования готовой)
+
+    # Источники движения
+    use_odometry: true             # Использовать одометрию (false, если она сильно врет)
+    use_scan_matching: true        # Сопоставление сканов — основа SLAM
+    use_scan_barycenter: false     # Использовать геометрический центр скана (обычно false)
+
+    # Параметры построения карты
+    resolution: 0.02               # Разрешение карты: размер клетки в метрах
+    max_laser_range: 10.0           # Максимальное расстояние луча лидара (должно совпадать с датчиком)
+    minimum_time_interval: 0.01    # Минимальное время между обработкой сканов
+    transform_publish_period: 0.01 # Как часто публиковать transform map -> odom
+
+    # Условия добавления новых узлов (ключевых фреймов)
+    minimum_travel_distance: 0.01          # Минимальное смещение робота (м), чтобы добавить узел
+    minimum_travel_heading: 0.02           # Минимальный поворот (рад), чтобы добавить узел
+    temporal_update_distance: 0.0         # [Отключено] автообновление по пройденному расстоянию
+    temporal_update_angle: 0.0            # [Отключено] автообновление по углу
+
+    # Частота обновления карты и графа
+    occupancy_map_update_frequency: 1.0   # Частота обновления карты (Гц)
+    optimization_frequency: 1.0           # Частота оптимизации графа (Гц)
+    optimizer_iterations: 10              # Кол-во итераций оптимизатора за проход
+
+    # Замыкание петель (Loop Closure)
+    do_loop_closing: true                         # Включить замыкание петель
+    loop_closure_enabled: true                    # Разрешить искать петли
+    loop_closure_frequency: 1.0                   # Частота попыток замыкания петель (Гц)
+    loop_closure_threshold: 4.0                   # Порог оценки совпадения сканов для петли
+    loop_match_max_distance: 8.0                  # Макс. расстояние для поиска петли (м)
+    loop_search_maximum_distance: 12.0            # Радиус поиска совпадений для петель
+    loop_match_minimum_chain_size: 10             # Мин. количество совпадающих сканов в цепочке
+    loop_match_maximum_variance_coverage: 0.2     # Допустимая дисперсия совпадений
+
+    # Расширенный линейный поиск сканов
+    correlation_search_space_dimension: 3.0       # Размер поиска вокруг текущей позиции (м)
+    correlation_search_space_resolution: 0.05     # Шаг линейного поиска (м)
+    correlation_search_space_smear_deviation: 0.03 # Сглаживание в модели совпадения (м)
+
+    # Расширенный угловой поиск сканов
+    angular_search_space_dimension: 6.2832        # Угловой диапазон поиска (рад) — 2π = 360°
+    angular_search_space_resolution: 0.01745      # Шаг углового поиска (~1° в радианах)
+
+    # Параметры расширенного сопоставления сканов
+    use_response_expansion: true          # Расширять область поиска при неудаче
+    match_window_size: 15                 # Размер окна сравнения
+    match_search_size: 15                 # Размер области поиска
+    match_response_threshold: 0.55        # Порог совпадения сканов
+    minimum_score_threshold: 0.45         # Минимальный допуск совпадения
+
+    # Управление памятью
+    max_submaps_to_keep: 20              # Количество подкарт, которые хранятся в графе
+
+    # Сохранение карты
+    serialization_time_interval: -1.0    # Отключить автосохранение (вручную через сервис)
