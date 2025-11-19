@@ -6,7 +6,7 @@ package_name = 'completed_scripts_jetbot'
 
 setup(
     name=package_name,
-    version='0.0.0',
+    version='1.0.0',
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -23,6 +23,10 @@ setup(
         (
             os.path.join("share", package_name, "rviz"),
             glob("rviz/*.rviz"),
+        ),
+        (
+            os.path.join("share", package_name, "maps"),
+            glob("maps/*.*"),
         ),
     ],
     install_requires=['setuptools'],

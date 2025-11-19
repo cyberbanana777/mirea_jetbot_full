@@ -2,12 +2,18 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>completed_scripts_jetbot</name>
-  <version>0.0.0</version>
+  <version>1.0.0</version>
   <description>This package include launch-files, what state the full system of jetbot from one click</description>
   <maintainer email="sashagrachev2005@gmail.com">banana-killer</maintainer>
   <license>MIT</license>
 
   <depend>ros2launch</depend>
+  <depend>realsense2-camera</depend>
+  <depend>slam-toolbox<depend>
+  <depend>tf2-ros<depend>
+  <depend>nav2-map-server</depend>
+  <depend>navigation2</depend>
+  <depend>nav2-bringup</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

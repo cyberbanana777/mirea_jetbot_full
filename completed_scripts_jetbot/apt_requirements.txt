@@ -1,2 +1,6 @@
 ros-galactic-realsense2-camera
 ros-galactic-slam-toolbox
+ros-galactic-tf2-ros
+ros-galactic-nav2-map-server
+ros-galactic-navigation2
+ros-galactic-nav2-bringup
