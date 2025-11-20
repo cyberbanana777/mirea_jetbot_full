@@ -7,13 +7,15 @@
   <maintainer email="sashagrachev2005@gmail.com">banana-killer</maintainer>
   <license>MIT</license>
 
-  <depend>ros2launch</depend>
-  <depend>realsense2-camera</depend>
-  <depend>slam-toolbox<depend>
-  <depend>tf2-ros<depend>
-  <depend>nav2-map-server</depend>
-  <depend>navigation2</depend>
-  <depend>nav2-bringup</depend>
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <!-- <exec_depend>launch_ros</exec_depend>
+  <exec_depend>realsense2-camera</exec_depend>
+  <exec_depend>slam-toolbox<exec_depend>
+  <exec_depend>tf2-ros<exec_depend>
+  <exec_depend>nav2-map-server</exec_depend>
+  <exec_depend>navigation2</exec_depend>
+  <exec_depend>nav2-bringup</exec_depend> -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

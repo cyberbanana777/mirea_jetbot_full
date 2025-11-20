@@ -21,6 +21,10 @@ setup(
             glob("config/*.yaml"),
         ),
         (
+            os.path.join("share", package_name, "config", 'navigation'),
+            glob("config/navigation/*.yaml"),
+        ),
+        (
             os.path.join("share", package_name, "rviz"),
             glob("rviz/*.rviz"),
         ),
