@@ -24,8 +24,7 @@ def generate_launch_description():
 
     # Specify the name of the package and path to xacro file within the package
     pkg_name = 'jetbot_mirea_description'
-    file_subpath = 'urdf/jetbot_mirea.urdf.xacro'
-
+    file_subpath = 'urdf/jetbot_mirea_detalied.urdf.xacro'
 
     rviz_config_dir = os.path.join(get_package_share_directory('jetbot_mirea_description'), 'rviz', 'urdf.rviz')
 
