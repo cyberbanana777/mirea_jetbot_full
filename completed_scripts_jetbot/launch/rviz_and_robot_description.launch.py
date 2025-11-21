@@ -58,10 +58,6 @@ def launch_setup(context, *args, **kwargs):
 
 def generate_launch_description():
     
-
-
-    
     return LaunchDescription([
-
-        OpaqueFunction(function=launch_setup)
+        OpaqueFunction(function=launch_setup),
     ])

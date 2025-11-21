@@ -20,8 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'stast_move_action = trajectory_maker.stast_move_action:main',
-            'stast_move_action = trajectory_maker.stast_move_topic:main',
+            'start_move_action = trajectory_maker.start_move_action:main',
+            'start_move_topic = trajectory_maker.start_move_topic:main',
 
         ],
     },
