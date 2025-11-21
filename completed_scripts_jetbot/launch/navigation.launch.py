@@ -54,14 +54,6 @@ def generate_launch_description():
             parameters=[bt_navigator_yaml, {'default_bt_xml_filename': default_bt_xml_path}]),
 
         Node(
-            package='rviz2',
-            executable='rviz2',
-            output='screen',
-            name='rviz2_node',
-            parameters=[{'use_sim_time': False}],
-            arguments=['-d', rviz_config_file_path]),
-
-        Node(
             package='nav2_waypoint_follower',
             executable='waypoint_follower',
             name='waypoint_follower',

@@ -63,11 +63,7 @@
     </joint>
 
     <link name="wheel_left_link">
-        <inertial>
-            <mass value="${wheel_mass}"/>
-            <origin xyz="0 0 0"/>
-            <inertia ixx="0.012411765597" ixy="-0.000711733678" ixz="0.00050272983" iyy="0.015218160428" iyz="-0.000004273467" izz="0.011763977943"/>
-        </inertial>  
+
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
@@ -84,9 +80,10 @@
             </geometry>
         </collision>
 
-        <xacro:inertial_cylinder mass="0.001" length="0.029" radius="0.032">
-            <origin xyz="0.0 -0.06 -0.005" rpy="0.0 0.0 0.0"/>
+        <xacro:inertial_cylinder mass="${wheel_mass}" length="0.029" radius="0.032">
+            <origin xyz="0 0 0" rpy="0 0 0"/>
         </xacro:inertial_cylinder>
+
 
     </link>
 
