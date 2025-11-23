@@ -87,6 +87,8 @@ bool ReadPIN_L_B_A;
 bool ReadPIN_L_A_B;
 bool ReadPIN_L_B_B;
 
+
+
 // Функции на прерывания для считывания изменения меток с каждого канала
 // Функции идентичны, только для разных каналов
 IRAM_ATTR void Read_R_A(){
@@ -177,14 +179,29 @@ void motorWrite(int CH, float set_speed) {
   }
 }
 
-void odomPublish (double x_pos_, double y_pos_, float heading_, float linear_vel_x, float angular_vel_z) {
+void odomPublish (double x_pos_, double y_pos_, double heading_, double linear_vel_x, double angular_vel_z, double left_wheel_velocity, double right_wheel_velocity) {
     feedback_msg_str = 
-    "$" +
+    "$1;" +
     String(x_pos_, 5) + ';' +
     String(y_pos_, 5) + ';' +
     String(heading_, 5) + ';' +
     String(linear_vel_x, 5) + ';' +
     String(angular_vel_z, 5) + ';' + 
+    String(left_wheel_velocity, 5) + ';' + 
+    String(right_wheel_velocity, 5) + ';' + 
+    "#";
+  Serial.println(feedback_msg_str);
+}
+
+void regulatorsCoefficientsPublish (double Kp_L, double Ki_L, double Kd_L, double Kp_R, double Ki_R, double Kd_R) {
+    feedback_msg_str = 
+    "$2;" +
+    String(Kp_L, 5) + ';' +
+    String(Ki_L, 5) + ';' +
+    String(Kd_L, 5) + ';' +
+    String(Kp_R, 5) + ';' +
+    String(Ki_R, 5) + ';' + 
+    String(Kd_R, 5) + ';' + 
     "#";
   Serial.println(feedback_msg_str);
 }
@@ -197,8 +214,13 @@ float mapFloat(float value, float fromLow, float fromHigh, float toLow, float to
 void speed_converter(double xl, double zw) {
   TargetLeft = xl - zw * l / 2;
   TargetRight = xl + zw * l / 2;
-  TargetLeft = mapFloat(TargetLeft, -1.2, 1.2, -0.8, 0.8 );
-  TargetRight = mapFloat(TargetRight, -1.2, 1.2, -0.8, 0.8 );
+  TargetLeft = mapFloat(TargetLeft, -1.2, 1.2, -0.8, 0.8);
+  TargetRight = mapFloat(TargetRight, -1.2, 1.2, -0.8, 0.8);
+}
+
+void cut_speeds(double V_l, double V_r){
+  TargetLeft = mapFloat(V_l, -1.2, 1.2, -0.8, 0.8);
+  TargetRight = mapFloat(V_r, -1.2, 1.2, -0.8, 0.8);
 }
 
 //Ответ на входное сообщение
@@ -221,6 +243,14 @@ void serialEvent() {
   }
 }
 
+void raise_error(){
+  while(true){
+    digitalWrite(LED_PIN, HIGH);
+    delay(500);
+    digitalWrite(LED_PIN, LOW);
+    delay(500);
+  }
+}
 
 void setup() {
   // Объявление прерываний
@@ -270,7 +300,7 @@ void loop() {
   if (delta >= timer_timeout){  
     tmr = micros();
 
-    // Настройка ПИДов: Установка целевых значений (закомментить)
+    // Настройка ПИДов: Установка целевых значений
     regulator_R.setpoint = TargetRight;  
     regulator_L.setpoint = TargetLeft; 
     
@@ -283,6 +313,8 @@ void loop() {
     double vel_dt = timer_timeout/1000;
     double linear_vel_x = (RealFrequencyRight + RealFrequencyLeft)*_obrat*2*Pi*r/2;
     double angular_vel_z = (RealFrequencyRight - RealFrequencyLeft)*_obrat*2*Pi*r/l;
+    double left_wheel_velocity = RealFrequencyLeft * _obrat;
+    double right_wheel_velocity = RealFrequencyRight * _obrat;
     double delta_heading = angular_vel_z * vel_dt/1000; //radians
     double cos_h = cos(heading_);
     double sin_h = sin(heading_);
@@ -292,98 +324,151 @@ void loop() {
     x_pos_ += delta_x;
     y_pos_ += delta_y;
     heading_ += delta_heading;
-    odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z);
+    odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, left_wheel_velocity, right_wheel_velocity);
 
     // Отправка в ПИДы расчитанного значения скорости 
     regulator_R.input = RealFrequencyRight; 
     regulator_L.input = RealFrequencyLeft;
 
     // Подача на моторы "исправленного" сигнала  
-    motorWrite(MOTOR_R, regulator_R.getResult());
-    motorWrite(MOTOR_L, regulator_L.getResult());
+    //motorWrite(MOTOR_R, regulator_R.getResult());
+    //motorWrite(MOTOR_L, regulator_L.getResult());
   }
 
     //Обработка входного значения
   if (stringComplete) {
+
+
     unsigned int i = 0;
+    unsigned int j = 0;
+
+
+    // msg_type
     for (i = 1; i < inputString.length()-1; i++){
       if (inputString[i] == ';') break;
       input_m[0] += inputString[i];
     }
-
-    for (i = i+1; i < inputString.length()-1; i++){
-      if (inputString[i] == ';') break;
-      input_m[1] += inputString[i];
-    }
-
-    for (i = i+1; i < inputString.length()-1; i++){
-      if (inputString[i] == ';') break;
-      input_m[2] += inputString[i];
-    }
-
-    for (i = i+1; i < inputString.length()-1; i++){
-      if (inputString[i] == ';') break;
-      input_m[3] += inputString[i];
-    }
-
-    for (i = i+1; i < inputString.length()-1; i++){
-      if (inputString[i] == ';') break;
-      input_m[4] += inputString[i];
-    }
-
-    for (i = i+1; i < inputString.length()-1; i++){
-      if (inputString[i] == ';') break;
-      input_m[5] += inputString[i];
-    }
-
-    for (i = i+1; i < inputString.length()-1; i++){
-      if (inputString[i] == ';') break;
-      input_m[6] += inputString[i];
-    }
-
-    for (i = i+1; i < inputString.length()-1; i++){
-      if (inputString[i] == ';') break;
-      input_m[7] += inputString[i];
-    }
-
     char str1[input_m[0].length()];
-    char str2[input_m[1].length()]; 
-    char str3[input_m[2].length()]; 
-    char str4[input_m[3].length()]; 
-    char str5[input_m[4].length()]; 
-    char str6[input_m[5].length()]; 
-    char str7[input_m[6].length()]; 
-    char str8[input_m[7].length()]; 
-
-    for(i=0; i < input_m[0].length(); i++) str1[i] = input_m[0][i];
-    for(i=0; i < input_m[1].length(); i++) str2[i] = input_m[1][i];
-    for(i=0; i < input_m[2].length(); i++) str3[i] = input_m[2][i];
-    for(i=0; i < input_m[3].length(); i++) str4[i] = input_m[3][i];
-    for(i=0; i < input_m[4].length(); i++) str5[i] = input_m[4][i];
-    for(i=0; i < input_m[5].length(); i++) str6[i] = input_m[5][i];
-    for(i=0; i < input_m[6].length(); i++) str7[i] = input_m[6][i];
-    for(i=0; i < input_m[7].length(); i++) str8[i] = input_m[7][i];
-
+    for(j=0; j < input_m[0].length(); j++) str1[j] = input_m[0][j];
     input_m[0] = "";
-    input_m[1] = "";
-    input_m[2] = "";
-    input_m[3] = "";
-    input_m[4] = "";
-    input_m[5] = "";
-    input_m[6] = "";
-    input_m[7] = "";
 
-    speed_converter(atof(str1), atof(str2));
+    int msg_type = (int)atof(str1);
 
-    regulator_L.Kp = atof(str3);
-    regulator_L.Kd = atof(str4);
-    regulator_L.Ki = atof(str5);
+    if (msg_type == 1){
+      // управление линейной и угловой скоростью платформы
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[1] += inputString[i];
+      }
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[2] += inputString[i];
+      }
+      char str2[input_m[1].length()]; 
+      char str3[input_m[2].length()];
+      for(i=0; i < input_m[1].length(); i++) str2[i] = input_m[1][i];
+      for(i=0; i < input_m[2].length(); i++) str3[i] = input_m[2][i];
+      input_m[1] = "";
+      input_m[2] = "";
 
-    regulator_L.Kp = atof(str6);
-    regulator_L.Kd = atof(str7);
-    regulator_L.Ki = atof(str8);
+      speed_converter(atof(str2), atof(str3));
+    }
+
+
+    else if (msg_type == 2){
+      // управление скоростями каждого из колёс
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[1] += inputString[i];
+      }
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[2] += inputString[i];
+      }
+      char str2[input_m[1].length()]; 
+      char str3[input_m[2].length()];
+      for(j=0; j < input_m[0].length(); j++) str1[j] = input_m[1][j];
+      for(j=0; j < input_m[0].length(); j++) str1[j] = input_m[2][j];
+      input_m[1] = "";
+      input_m[2] = "";
+
+      cut_speeds(atof(str2), atof(str3));
+    }
+
+    else if (msg_type == 3){
+      // Установка новых PID-коэффициентов
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[1] += inputString[i];
+      }
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[2] += inputString[i];
+      }
+
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[3] += inputString[i];
+      }
+
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[4] += inputString[i];
+      }
+
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[5] += inputString[i];
+      }
+
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[6] += inputString[i];
+      }
+      char str2[input_m[1].length()]; 
+      char str3[input_m[2].length()];
+      char str4[input_m[3].length()]; 
+      char str5[input_m[4].length()]; 
+      char str6[input_m[5].length()]; 
+      char str7[input_m[6].length()]; 
+      for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
+      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
+      for(j=0; j < input_m[3].length(); j++) str4[j] = input_m[3][j];
+      for(j=0; j < input_m[4].length(); j++) str5[j] = input_m[4][j];
+      for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j];
+      for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j];
+      input_m[1] = "";
+      input_m[2] = "";
+      input_m[3] = "";
+      input_m[4] = "";
+      input_m[5] = "";
+      input_m[6] = "";
+
+      regulator_L.Kp = atof(str2);
+      regulator_L.Ki = atof(str3);
+      regulator_L.Kd = atof(str4);
+
+      regulator_R.Kp = atof(str5);
+      regulator_R.Ki = atof(str6);
+      regulator_R.Kd = atof(str7);
+    }
+        
+    else if (msg_type == 4){
+      regulatorsCoefficientsPublish(
+        regulator_L.Kp,
+        regulator_L.Ki,
+        regulator_L.Kd,
+        regulator_R.Kp,
+        regulator_R.Ki,
+        regulator_R.Kd
+      );
+    }
+
+    else{
+      raise_error();
+    }
+  }
 
     inputString = "";
     stringComplete = false;
-  }
 }
