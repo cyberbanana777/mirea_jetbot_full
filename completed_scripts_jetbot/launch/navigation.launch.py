@@ -32,33 +32,33 @@ def generate_launch_description():
             output='screen',
             parameters=[nav2_yaml]
         ),
-        Node(
-            package='nav2_controller',
-            executable='controller_server',
-            name='controller_server',
-            output='screen',
-            parameters=[controller_yaml]),
+        # Node(
+        #     package='nav2_controller',
+        #     executable='controller_server',
+        #     name='controller_server',
+        #     output='screen',
+        #     parameters=[controller_yaml]),
 
-        Node(
-            package='nav2_planner',
-            executable='planner_server',
-            name='planner_server',
-            output='screen',
-            parameters=[planner_yaml]),
+        # Node(
+        #     package='nav2_planner',
+        #     executable='planner_server',
+        #     name='planner_server',
+        #     output='screen',
+        #     parameters=[planner_yaml]),
 
-        Node(
-            package='nav2_bt_navigator',
-            executable='bt_navigator',
-            name='bt_navigator',
-            output='screen',
-            parameters=[bt_navigator_yaml, {'default_bt_xml_filename': default_bt_xml_path}]),
+        # Node(
+        #     package='nav2_bt_navigator',
+        #     executable='bt_navigator',
+        #     name='bt_navigator',
+        #     output='screen',
+        #     parameters=[bt_navigator_yaml, {'default_bt_xml_filename': default_bt_xml_path}]),
 
-        Node(
-            package='nav2_waypoint_follower',
-            executable='waypoint_follower',
-            name='waypoint_follower',
-            output='screen',
-            parameters=[waypoint_follower_yaml]),
+        # Node(
+        #     package='nav2_waypoint_follower',
+        #     executable='waypoint_follower',
+        #     name='waypoint_follower',
+        #     output='screen',
+        #     parameters=[waypoint_follower_yaml]),
         
 
         Node(
@@ -69,10 +69,11 @@ def generate_launch_description():
             parameters=[{'autostart': True},
                         {'node_names': ['map_server',
                                         'amcl',
-                                        'controller_server',
-                                        'planner_server',
-                                        'bt_navigator',
-                                        'waypoint_follower']}]),
+                                        #'controller_server',
+                                        #'planner_server',
+                                        #'bt_navigator',
+                                        #'waypoint_follower'
+                                        ]}]),
         TimerAction(
             period=2.0,  # Задержка в секундах
             actions=[

@@ -331,8 +331,8 @@ void loop() {
     regulator_L.input = RealFrequencyLeft;
 
     // Подача на моторы "исправленного" сигнала  
-    //motorWrite(MOTOR_R, regulator_R.getResult());
-    //motorWrite(MOTOR_L, regulator_L.getResult());
+    motorWrite(MOTOR_R, regulator_R.getResult());
+    motorWrite(MOTOR_L, regulator_L.getResult());
   }
 
     //Обработка входного значения

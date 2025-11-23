@@ -9,13 +9,17 @@
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <!-- <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
   <exec_depend>realsense2-camera</exec_depend>
-  <exec_depend>slam-toolbox<exec_depend>
-  <exec_depend>tf2-ros<exec_depend>
+  <exec_depend>slam-toolbox</exec_depend>
+  <exec_depend>tf2-ros</exec_depend>
   <exec_depend>nav2-map-server</exec_depend>
   <exec_depend>navigation2</exec_depend>
-  <exec_depend>nav2-bringup</exec_depend> -->
+  <exec_depend>nav2-bringup</exec_depend>
+
+  <exec_depend>sllidar_ros2</exec_depend>
+  <exec_depend>serial_bridge_package</exec_depend>
+  <exec_depend>jetbot_mirea_description</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
