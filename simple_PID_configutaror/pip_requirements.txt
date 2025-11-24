@@ -1,2 +1,3 @@
-pyserial
-matplotlib
+pyserial==3.5
+matplotlib==3.7.5
+pillow==10.4.0
