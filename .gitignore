@@ -1,2 +1,4 @@
 .vscode
 __pycache__
+without_device.txt
+with_device.txt
