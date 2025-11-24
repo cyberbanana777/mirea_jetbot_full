@@ -29,22 +29,6 @@ class TwistToCommand(Node):
 
     def __init__(self):
         super().__init__('twist_to_command')
-
-        self.declare_parameter('Kp_left', 2.075)
-        self.declare_parameter('Kd_left', 0.005)
-        self.declare_parameter('Ki_left', 0.0)
-
-        self.declare_parameter('Kp_right', 2.075)
-        self.declare_parameter('Kd_right', 0.005)
-        self.declare_parameter('Ki_right', 0.0)
-
-        self.Kp_left = str(self.get_parameter('Kp_left').value)
-        self.Kd_left = str(self.get_parameter('Kd_left').value)
-        self.Ki_left = str(self.get_parameter('Ki_left').value)
-
-        self.Kp_right = str(self.get_parameter('Kp_right').value)
-        self.Kd_right = str(self.get_parameter('Kd_right').value)
-        self.Ki_right = str(self.get_parameter('Ki_right').value)
         
         # Subscription to Twist topic (movement control)
         self.subscription = self.create_subscription(
@@ -72,7 +56,7 @@ class TwistToCommand(Node):
         angular_z = msg.angular.z
         
         # Format message according to protocol
-        command = f"${linear_x:.3f};{angular_z:.3f};{self.Kp_left};{self.Kd_left};{self.Ki_left};{self.Kp_right};{self.Kd_right};{self.Ki_right};#"
+        command = f"$1;{linear_x:.3f};{angular_z:.3f};#"
         
         # Create and publish String message
         string_msg = String()

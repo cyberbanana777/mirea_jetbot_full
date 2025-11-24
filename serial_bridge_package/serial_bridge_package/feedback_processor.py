@@ -28,7 +28,7 @@ from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Quaternion, TransformStamped
 from tf2_ros import TransformBroadcaster
 
-NUMS_OF_FIELDS = 6
+NUMS_OF_FIELDS = 8
 
 class FeedbackProcessor(Node):
     """
@@ -49,6 +49,7 @@ class FeedbackProcessor(Node):
         
         # Publishers for various data types
         self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
+        self.PID_coeff_pub = self.create_publisher(String, '/PIDcoeffs', 10)
         self.left_speed_pub = self.create_publisher(Float32, '/sensors/wheel/left/speed', 10)
         self.right_speed_pub = self.create_publisher(Float32, '/sensors/wheel/right/speed', 10)
 
@@ -85,29 +86,51 @@ class FeedbackProcessor(Node):
             
             # Split data by semicolons
             parts = content.split(';')
+            msg_type = float(parts[0])
             
             if len(parts) >= NUMS_OF_FIELDS:  # Check if all fields are present
-                # Parse data
-                x_position = float(parts[0])
-                y_position = float(parts[1])
-                omega_angle = float(parts[2])
-                x_real_linear_velocity = float(parts[3])
-                z_real_angular_velocity = float(parts[4])
+                if msg_type == 1:    
+                    # Parse data
+                    x_position = float(parts[1])
+                    y_position = float(parts[2])
+                    omega_angle = float(parts[3])
+                    x_real_linear_velocity = float(parts[4])
+                    z_real_angular_velocity = float(parts[5])
+                    left_wheel_speed = float(parts[6])
+                    right_wheel_speed = float(parts[7])
 
-                # Publish data to appropriate topics
-                self.publish_odometry(
-                    x_position, y_position, omega_angle,
-                    x_real_linear_velocity, z_real_angular_velocity
-                )
+                    # Publish data to appropriate topics
+                    self.publish_odometry(
+                        x_position, y_position, omega_angle,
+                        x_real_linear_velocity, z_real_angular_velocity
+                    )
 
-                self.publish_wheels_speed(
-                    x_real_linear_velocity,
-                    z_real_angular_velocity
-                )
+                    self.publish_wheels_speed(
+                        left_wheel_speed,
+                        right_wheel_speed
+                    )
+                    
+                    self.get_logger().debug(
+                        f'Processed ESP32 message: position ({x_position:.2f}, {y_position:.2f})'
+                    )
                 
-                self.get_logger().debug(
-                    f'Processed ESP32 message: position ({x_position:.2f}, {y_position:.2f})'
-                )
+                elif msg_type == 2:
+                    # Parse data
+                    Kp_L = float(parts[1])
+                    Ki_L = float(parts[2])
+                    Kd_L = float(parts[3])
+                    Kp_R = float(parts[4])
+                    Ki_R = float(parts[5])
+                    Kd_R = float(parts[6])
+                    
+                    # Publish PID coefficients
+                    self.publish_PID_coefficients(Kp_L, Ki_L, Kd_L, Kp_R, Ki_R, Kd_R)
+                    
+                else:
+                    self.get_logger().debug(
+                        f'Invalid msg_type = {msg_type})'
+                    )
+                   
                 
             else:
                 self.get_logger().warning(
@@ -119,20 +142,21 @@ class FeedbackProcessor(Node):
                 f'Error parsing message: {msg.data}. Error: {e}'
                 )
 
-    def publish_wheels_speed(self, x_lirear_speed, z_real_angular_velocity):
+    def publish_PID_coefficients(self, Kp_L, Ki_L, Kd_L, Kp_R, Ki_R, Kd_R):
+        """Publish PID coefficients."""
+        pid_msg = String()
+        pid_msg.data = f'{Kp_L};{Ki_L};{Kd_L};{Kp_R};{Ki_R};{Kd_R}'
+        self.PID_coeff_pub.publish(pid_msg)
+
+    def publish_wheels_speed(self, left_wheel_speed, right_wheel_speed):
         """Publish wheel speed data."""
         
-        l = 0.117 # width of the wheel base
-
-        wheel_speed_left = x_lirear_speed - z_real_angular_velocity * l / 2
-        wheel_speed_right = x_lirear_speed + z_real_angular_velocity * l / 2
-
         left_speed_msg = Float32()
-        left_speed_msg.data = wheel_speed_left
+        left_speed_msg.data = left_wheel_speed
         self.left_speed_pub.publish(left_speed_msg)
         
         right_speed_msg = Float32()
-        right_speed_msg.data = wheel_speed_right
+        right_speed_msg.data = right_wheel_speed
         self.right_speed_pub.publish(right_speed_msg)
 
     def publish_odometry(self, x, y, theta, vx, vth):
