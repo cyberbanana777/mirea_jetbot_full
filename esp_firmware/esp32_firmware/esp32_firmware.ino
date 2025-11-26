@@ -1,3 +1,7 @@
+// Copyright (c) 2025 Alice Zenina and Alexander Grachev RTU MIREA (Russia)
+// SPDX-License-Identifier: MIT
+// Details in the LICENSE file in the root of the package.
+
 #include <Arduino.h>
 #include <math.h>
 #include <Preferences.h>

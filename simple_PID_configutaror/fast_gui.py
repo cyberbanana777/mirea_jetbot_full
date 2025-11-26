@@ -415,9 +415,15 @@ class SerialBridgeGUI:
             entry.insert(0, "0.0")
             self.pid_entries.append(entry)
         
+        # Button container for Send and Write to Flash
+        button_container = ttk.Frame(setup_frame)
+        button_container.grid(row=2, column=0, columnspan=2, pady=15)
+        button_container.columnconfigure(0, weight=1)
+        button_container.columnconfigure(1, weight=1)
+        
         # Green Send PID button
         send_button = tk.Button(
-            setup_frame, 
+            button_container, 
             text="Send PID Coefficients", 
             command=self.send_tab3_message,
             bg="#4CAF50",  # Green color
@@ -426,7 +432,20 @@ class SerialBridgeGUI:
             width=20,
             height=2
         )
-        send_button.grid(row=2, column=0, columnspan=2, pady=15)
+        send_button.grid(row=0, column=0, padx=(0, 5), sticky='ew')
+        
+        # Orange Write to Flash button
+        write_flash_button = tk.Button(
+            button_container, 
+            text="Write to Flash", 
+            command=self.send_write_flash_message,
+            bg="#FF9800",  # Orange color
+            fg="white",
+            font=("Arial", 11, "bold"),
+            width=20,
+            height=2
+        )
+        write_flash_button.grid(row=0, column=1, padx=(5, 0), sticky='ew')
         
         # Right column - Current PID values
         current_frame = ttk.LabelFrame(controls_container, text="Current PID Values", padding="15")
@@ -487,6 +506,28 @@ class SerialBridgeGUI:
         # Plots for tab 3 - full width
         self.create_tab3_plots(main_container)
 
+    def send_write_flash_message(self):
+        """Send message to write PID coefficients to flash"""
+        if not self.ser or not self.ser.is_open:
+            self.update_status("Error: serial port not open")
+            return
+            
+        try:
+            coefficients = []
+            for entry in self.pid_entries:
+                coefficients.append(float(entry.get().strip()))
+            
+            formatted_message = f"$4;{';'.join(map(str, coefficients))};#"
+            
+            self.ser.write(formatted_message.encode('utf-8'))
+            self.log_sent_message(f"Write PID to flash: {coefficients}")
+            self.update_status("PID coefficients written to flash")
+            
+        except ValueError:
+            self.update_status("Error: invalid number")
+        except Exception as e:
+            self.update_status(f"Error: {e}")
+
     def create_tab3_plots(self, parent_frame):
         """Create plots for tab 3: PID Tuning - Full Width"""
         try:
@@ -525,7 +566,7 @@ class SerialBridgeGUI:
             return
             
         try:
-            formatted_message = "$4;#"
+            formatted_message = "$5;#"
             self.ser.write(formatted_message.encode('utf-8'))
             self.log_sent_message(f"Get PID: {formatted_message}")
             self.update_status("PID request sent")
@@ -910,6 +951,7 @@ class SerialBridgeGUI:
 
 def main():
     serial_port = '/dev/esp32'
+    serial_port = '/dev/ttyUSB0'  # Replace with your ESP32's serial port
     baudrate = 115200
     
     app = SerialBridgeGUI(serial_port, baudrate)
