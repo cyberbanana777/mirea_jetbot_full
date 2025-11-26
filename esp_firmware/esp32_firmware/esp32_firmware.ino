@@ -1,11 +1,17 @@
 #include <Arduino.h>
 #include <math.h>
+#include <Preferences.h>
 
-//библиотеки регуляции и управления
+// Библиотеки регуляции и управления
 #include "GyverPID.h"
 #include <Wire.h>                     
 #include <Adafruit_PWMServoDriver.h> 
 #include <stdio.h>
+
+// Настройки для записи в постоянную память
+#define RW_MODE false
+#define RO_MODE true
+Preferences fleshMemory;
 
 String inputString = "";         // a String to hold incoming data
 bool stringComplete = false;  // whether the string is complete
@@ -15,6 +21,9 @@ bool input_open = false;
 const float Pi = 3.14159;
 const float l = 0.117;
 const float r = 0.065/2;
+
+float max_frequency = 3.2;
+float max_vel = max_frequency * 2 * Pi * r;
 
 #define LED_PIN 13 // Оставлен для debug
 
@@ -38,6 +47,7 @@ float Kp_L = 2.075;
 float Ki_L = 0.0;
 float Kd_L = 0.005; 
 GyverPID regulator_L(Kp_L, Ki_L, Kd_L, dt);
+
 
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x60);
 
@@ -208,19 +218,26 @@ void regulatorsCoefficientsPublish (double Kp_L, double Ki_L, double Kd_L, doubl
 
 //int map(int value, int fromLow, int fromHigh, int toLow, int toHigh);
 float mapFloat(float value, float fromLow, float fromHigh, float toLow, float toHigh) {
-    return (value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
+    float temp_value;
+    if (value < fromLow) {temp_value = fromLow;}
+    else if (value > fromHigh) {temp_value = fromHigh;}
+    else {
+      temp_value = value;
+    }
+
+    return (temp_value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
 }
 
 void speed_converter(double xl, double zw) {
   TargetLeft = xl - zw * l / 2;
   TargetRight = xl + zw * l / 2;
-  TargetLeft = mapFloat(TargetLeft, -1.2, 1.2, -0.8, 0.8);
-  TargetRight = mapFloat(TargetRight, -1.2, 1.2, -0.8, 0.8);
+  TargetLeft = mapFloat(TargetLeft, -max_vel*0.8, max_vel*0.8, -0.8, 0.8);
+  TargetRight = mapFloat(TargetRight, -max_vel*0.8, max_vel*0.8, -0.8, 0.8);
 }
 
-void cut_speeds(double V_l, double V_r){
-  TargetLeft = mapFloat(V_l, -1.2, 1.2, -0.8, 0.8);
-  TargetRight = mapFloat(V_r, -1.2, 1.2, -0.8, 0.8);
+void cut_speeds(float V_l, float V_r){
+  TargetLeft = mapFloat(V_l, -max_vel*0.8, max_vel*0.8, -0.8, 0.8);
+  TargetRight = mapFloat(V_r, -max_vel*0.8, max_vel*0.8, -0.8, 0.8);
 }
 
 //Ответ на входное сообщение
@@ -282,6 +299,44 @@ void setup() {
   inputString.reserve(250);
   
   delay(100);
+
+  fleshMemory.begin("Memory1", RO_MODE);
+  bool tpInit = fleshMemory.isKey("nvsInit");
+
+  if (tpInit == false) {
+
+    Serial.println("First time run the program");
+
+    fleshMemory.end();                             
+    fleshMemory.begin("Memory1", RW_MODE);
+
+    fleshMemory.putFloat("Kp_R", Kp_R); 
+    fleshMemory.putFloat("Ki_R", Ki_R); 
+    fleshMemory.putFloat("Kd_R", Kd_R); 
+
+    fleshMemory.putFloat("Kp_L", Kp_L);
+    fleshMemory.putFloat("Ki_L", Ki_L); 
+    fleshMemory.putFloat("Kd_L", Kd_L); 
+
+    fleshMemory.putBool("nvsInit", true);
+    
+    fleshMemory.end();
+  } 
+  
+  else {
+
+    Serial.println("Koeffs get from memory");
+
+    regulator_R.Kp = fleshMemory.getFloat("Kp_R"); 
+    regulator_R.Ki = fleshMemory.getFloat("Ki_R"); 
+    regulator_R.Kd = fleshMemory.getFloat("Kd_R"); 
+
+    regulator_L.Kp = fleshMemory.getFloat("Kp_L"); 
+    regulator_L.Ki = fleshMemory.getFloat("Ki_L"); 
+    regulator_L.Kd = fleshMemory.getFloat("Kd_L"); 
+
+    fleshMemory.end();
+  }
   
   motorWrite(MOTOR_R, 0.0);
   motorWrite(MOTOR_L, 0.0);
@@ -305,16 +360,16 @@ void loop() {
     regulator_L.setpoint = TargetLeft; 
     
     //Подсчёт скорости
-    RealFrequencyRight = R * (((float)global_pos_R*1000000)/(270*4*timer_timeout));
-    RealFrequencyLeft = L * (((float)global_pos_L*1000000)/(270*4*timer_timeout));
+    RealFrequencyRight = (((float)global_pos_R*1000000)/(270*4*timer_timeout));
+    RealFrequencyLeft = (((float)global_pos_L*1000000)/(270*4*timer_timeout));
     global_pos_R = 0;
     global_pos_L = 0;
     
     double vel_dt = timer_timeout/1000;
-    double linear_vel_x = (RealFrequencyRight + RealFrequencyLeft)*_obrat*2*Pi*r/2;
-    double angular_vel_z = (RealFrequencyRight - RealFrequencyLeft)*_obrat*2*Pi*r/l;
-    double left_wheel_velocity = RealFrequencyLeft * _obrat;
-    double right_wheel_velocity = RealFrequencyRight * _obrat;
+    double linear_vel_x = (RealFrequencyRight + RealFrequencyLeft)*2*Pi*r/2;
+    double angular_vel_z = (RealFrequencyRight - RealFrequencyLeft)*2*Pi*r/l;
+    double left_wheel_velocity = RealFrequencyLeft * 2 * Pi * r;
+    double right_wheel_velocity = RealFrequencyRight  * 2 * Pi * r;
     double delta_heading = angular_vel_z * vel_dt/1000; //radians
     double cos_h = cos(heading_);
     double sin_h = sin(heading_);
@@ -324,11 +379,14 @@ void loop() {
     x_pos_ += delta_x;
     y_pos_ += delta_y;
     heading_ += delta_heading;
-    odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, left_wheel_velocity, right_wheel_velocity);
+    // odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, left_wheel_velocity, right_wheel_velocity);
+    odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, RealFrequencyLeft, RealFrequencyRight);
 
     // Отправка в ПИДы расчитанного значения скорости 
-    regulator_R.input = RealFrequencyRight; 
-    regulator_L.input = RealFrequencyLeft;
+    regulator_R.input = RealFrequencyRight / 3.2; // 3.2
+    regulator_L.input = RealFrequencyLeft / 3.2;
+
+
 
     // Подача на моторы "исправленного" сигнала  
     motorWrite(MOTOR_R, regulator_R.getResult());
@@ -366,14 +424,13 @@ void loop() {
       }
       char str2[input_m[1].length()]; 
       char str3[input_m[2].length()];
-      for(i=0; i < input_m[1].length(); i++) str2[i] = input_m[1][i];
-      for(i=0; i < input_m[2].length(); i++) str3[i] = input_m[2][i];
+      for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
+      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
       input_m[1] = "";
       input_m[2] = "";
 
       speed_converter(atof(str2), atof(str3));
     }
-
 
     else if (msg_type == 2){
       // управление скоростями каждого из колёс
@@ -387,8 +444,8 @@ void loop() {
       }
       char str2[input_m[1].length()]; 
       char str3[input_m[2].length()];
-      for(j=0; j < input_m[0].length(); j++) str1[j] = input_m[1][j];
-      for(j=0; j < input_m[0].length(); j++) str1[j] = input_m[2][j];
+      for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
+      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
       input_m[1] = "";
       input_m[2] = "";
 
@@ -452,8 +509,79 @@ void loop() {
       regulator_R.Ki = atof(str6);
       regulator_R.Kd = atof(str7);
     }
-        
+
     else if (msg_type == 4){
+      // Установка новых PID-коэффициентов
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[1] += inputString[i];
+      }
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[2] += inputString[i];
+      }
+
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[3] += inputString[i];
+      }
+
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[4] += inputString[i];
+      }
+
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[5] += inputString[i];
+      }
+
+      for (i = i+1; i < inputString.length()-1; i++){
+        if (inputString[i] == ';') break;
+        input_m[6] += inputString[i];
+      }
+      char str2[input_m[1].length()]; 
+      char str3[input_m[2].length()];
+      char str4[input_m[3].length()]; 
+      char str5[input_m[4].length()]; 
+      char str6[input_m[5].length()]; 
+      char str7[input_m[6].length()]; 
+      for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
+      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
+      for(j=0; j < input_m[3].length(); j++) str4[j] = input_m[3][j];
+      for(j=0; j < input_m[4].length(); j++) str5[j] = input_m[4][j];
+      for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j];
+      for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j];
+      input_m[1] = "";
+      input_m[2] = "";
+      input_m[3] = "";
+      input_m[4] = "";
+      input_m[5] = "";
+      input_m[6] = "";
+
+      regulator_L.Kp = atof(str2);
+      regulator_L.Ki = atof(str3);
+      regulator_L.Kd = atof(str4);
+
+      regulator_R.Kp = atof(str5);
+      regulator_R.Ki = atof(str6);
+      regulator_R.Kd = atof(str7);
+
+      fleshMemory.begin("Memory1", RW_MODE);
+
+      fleshMemory.putFloat("Kp_R", regulator_R.Kp); 
+      fleshMemory.putFloat("Ki_R", regulator_R.Ki); 
+      fleshMemory.putFloat("Kd_R", regulator_R.Kd); 
+
+      fleshMemory.putFloat("Kp_L", regulator_L.Kp);
+      fleshMemory.putFloat("Ki_L", regulator_L.Ki); 
+      fleshMemory.putFloat("Kd_L", regulator_L.Kd); 
+
+      fleshMemory.end();
+      
+    }
+        
+    else if (msg_type == 5){
       regulatorsCoefficientsPublish(
         regulator_L.Kp,
         regulator_L.Ki,
@@ -464,9 +592,11 @@ void loop() {
       );
     }
 
-    else{
-      raise_error();
-    }
+
+
+    // else{
+    //   raise_error();
+    // }
   }
 
     inputString = "";
