@@ -325,8 +325,6 @@ void setup() {
   
   else {
 
-    Serial.println("Koeffs get from memory");
-
     regulator_R.Kp = fleshMemory.getFloat("Kp_R"); 
     regulator_R.Ki = fleshMemory.getFloat("Ki_R"); 
     regulator_R.Kd = fleshMemory.getFloat("Kd_R"); 
@@ -482,18 +480,24 @@ void loop() {
         if (inputString[i] == ';') break;
         input_m[6] += inputString[i];
       }
-      char str2[input_m[1].length()]; 
-      char str3[input_m[2].length()];
-      char str4[input_m[3].length()]; 
-      char str5[input_m[4].length()]; 
-      char str6[input_m[5].length()]; 
-      char str7[input_m[6].length()]; 
+      char str2[input_m[1].length() + 1]; 
+      char str3[input_m[2].length() + 1];
+      char str4[input_m[3].length() + 1]; 
+      char str5[input_m[4].length() + 1]; 
+      char str6[input_m[5].length() + 1]; 
+      char str7[input_m[6].length() + 1]; 
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
+      str4[input_m[1].length()] = '\0';
       for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
+      str4[input_m[2].length()] = '\0';
       for(j=0; j < input_m[3].length(); j++) str4[j] = input_m[3][j];
+      str4[input_m[3].length()] = '\0';
       for(j=0; j < input_m[4].length(); j++) str5[j] = input_m[4][j];
+      str4[input_m[4].length()] = '\0';
       for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j];
+      str4[input_m[5].length()] = '\0';
       for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j];
+      str4[input_m[6].length()] = '\0';
       input_m[1] = "";
       input_m[2] = "";
       input_m[3] = "";
@@ -540,18 +544,24 @@ void loop() {
         if (inputString[i] == ';') break;
         input_m[6] += inputString[i];
       }
-      char str2[input_m[1].length()]; 
-      char str3[input_m[2].length()];
-      char str4[input_m[3].length()]; 
-      char str5[input_m[4].length()]; 
-      char str6[input_m[5].length()]; 
-      char str7[input_m[6].length()]; 
+      char str2[input_m[1].length() + 1]; 
+      char str3[input_m[2].length() + 1];
+      char str4[input_m[3].length() + 1]; 
+      char str5[input_m[4].length() + 1]; 
+      char str6[input_m[5].length() + 1]; 
+      char str7[input_m[6].length() + 1]; 
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
+      str4[input_m[1].length()] = '\0';
       for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
+      str4[input_m[2].length()] = '\0';
       for(j=0; j < input_m[3].length(); j++) str4[j] = input_m[3][j];
+      str4[input_m[3].length()] = '\0';
       for(j=0; j < input_m[4].length(); j++) str5[j] = input_m[4][j];
+      str4[input_m[4].length()] = '\0';
       for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j];
+      str4[input_m[5].length()] = '\0';
       for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j];
+      str4[input_m[6].length()] = '\0';
       input_m[1] = "";
       input_m[2] = "";
       input_m[3] = "";
