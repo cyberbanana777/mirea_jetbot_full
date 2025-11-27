@@ -75,14 +75,12 @@ unsigned int im_timer = 0;
 // Переменные скорости правые
 float RealFrequencyRight = 0.0;
 float TargetRight = 0.0;
-float R = 1/3.5;
 
 // Переменные скорости левые
 float RealFrequencyLeft = 0.0;
 float TargetLeft = 0.0;
-float L = 1/3.5; // Подгоночный коэффициент для перевода из об/с в нормированные единицы
 
-float _obrat = 3.5; 
+double max_contructive_velocity = 3.2;
 
 double x_pos_ = 0.0;
 double y_pos_ = 0.0;
@@ -228,7 +226,6 @@ float mapFloat(float value, float fromLow, float fromHigh, float toLow, float to
     else {
       temp_value = value;
     }
-
     return (temp_value - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
 }
 
@@ -348,6 +345,7 @@ void setup() {
 void loop() {
 
   if (millis() - im_timer > im_timer_timeout){
+    // Аварийная остановка
     TargetRight = 0;
     TargetLeft = 0;
   }
@@ -367,7 +365,7 @@ void loop() {
     global_pos_R = 0;
     global_pos_L = 0;
     
-    double vel_dt = timer_timeout/1000;
+    double vel_dt = timer_timeout/1000; // ms
     double linear_vel_x = (RealFrequencyRight + RealFrequencyLeft)*2*Pi*r/2;
     double angular_vel_z = (RealFrequencyRight - RealFrequencyLeft)*2*Pi*r/l;
     double left_wheel_velocity = RealFrequencyLeft * 2 * Pi * r;
@@ -381,14 +379,11 @@ void loop() {
     x_pos_ += delta_x;
     y_pos_ += delta_y;
     heading_ += delta_heading;
-    // odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, left_wheel_velocity, right_wheel_velocity);
-    odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, RealFrequencyLeft, RealFrequencyRight);
+    odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, left_wheel_velocity, right_wheel_velocity);
 
     // Отправка в ПИДы расчитанного значения скорости 
-    regulator_R.input = RealFrequencyRight / 3.2; // 3.2
-    regulator_L.input = RealFrequencyLeft / 3.2;
-
-
+    regulator_R.input = RealFrequencyRight / max_contructive_velocity;
+    regulator_L.input = RealFrequencyLeft / max_contructive_velocity;
 
     // Подача на моторы "исправленного" сигнала  
     motorWrite(MOTOR_R, regulator_R.getResult());
@@ -398,10 +393,8 @@ void loop() {
     //Обработка входного значения
   if (stringComplete) {
 
-
     unsigned int i = 0;
     unsigned int j = 0;
-
 
     // msg_type
     for (i = 1; i < inputString.length()-1; i++){
@@ -416,98 +409,81 @@ void loop() {
 
     if (msg_type == 1){
       // управление линейной и угловой скоростью платформы
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[1] += inputString[i];
+
+      unsigned short num_flied = 2;
+
+      for (j = 1; j < num_flied; j++){
+        for (i = i+1; i < inputString.length()-1; i++){
+          if (inputString[i] == ';') break;
+          input_m[j] += inputString[i];
+        }
       }
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[2] += inputString[i];
-      }
+
       char str2[input_m[1].length()]; 
       char str3[input_m[2].length()];
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
-      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
-      input_m[1] = "";
-      input_m[2] = "";
+      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];      
+      
+      for (j = 1; j < num_flied; j++){
+        input_m[j] = "";
+      }
 
       speed_converter(atof(str2), atof(str3));
     }
 
     else if (msg_type == 2){
       // управление скоростями каждого из колёс
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[1] += inputString[i];
-      }
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[2] += inputString[i];
+
+      unsigned short num_flied = 2;
+
+      for (j = 1; j < num_flied; j++){
+        for (i = i+1; i < inputString.length()-1; i++){
+          if (inputString[i] == ';') break;
+          input_m[j] += inputString[i];
+        }
       }
       char str2[input_m[1].length()]; 
       char str3[input_m[2].length()];
+      
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
-      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
-      input_m[1] = "";
-      input_m[2] = "";
+      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j]; 
+
+      for (j = 1; j < num_flied; j++){
+        input_m[j] = "";
+      }
 
       cut_speeds(atof(str2), atof(str3));
     }
 
     else if (msg_type == 3){
-      // Установка новых PID-коэффициентов
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[1] += inputString[i];
-      }
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[2] += inputString[i];
+      // Установка новых PID-коэффициентов во временную память
+
+      unsigned short num_flied = 7;
+
+      for (j = 1; j < num_flied; j++){
+        for (i = i+1; i < inputString.length()-1; i++){
+          if (inputString[i] == ';') break;
+          input_m[j] += inputString[i];
+        }
       }
 
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[3] += inputString[i];
-      }
+      char str2[input_m[1].length()]; 
+      char str3[input_m[2].length()];
+      char str4[input_m[3].length()]; 
+      char str5[input_m[4].length()]; 
+      char str6[input_m[5].length()]; 
+      char str7[input_m[6].length()]; 
 
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[4] += inputString[i];
-      }
-
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[5] += inputString[i];
-      }
-
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[6] += inputString[i];
-      }
-      char str2[input_m[1].length() + 1]; 
-      char str3[input_m[2].length() + 1];
-      char str4[input_m[3].length() + 1]; 
-      char str5[input_m[4].length() + 1]; 
-      char str6[input_m[5].length() + 1]; 
-      char str7[input_m[6].length() + 1]; 
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
-      str4[input_m[1].length()] = '\0';
-      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
-      str4[input_m[2].length()] = '\0';
-      for(j=0; j < input_m[3].length(); j++) str4[j] = input_m[3][j];
-      str4[input_m[3].length()] = '\0';
-      for(j=0; j < input_m[4].length(); j++) str5[j] = input_m[4][j];
-      str4[input_m[4].length()] = '\0';
-      for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j];
-      str4[input_m[5].length()] = '\0';
-      for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j];
-      str4[input_m[6].length()] = '\0';
-      input_m[1] = "";
-      input_m[2] = "";
-      input_m[3] = "";
-      input_m[4] = "";
-      input_m[5] = "";
-      input_m[6] = "";
+      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j]; 
+      for(j=0; j < input_m[3].length(); j++) str4[j] = input_m[3][j]; 
+      for(j=0; j < input_m[4].length(); j++) str5[j] = input_m[4][j]; 
+      for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j]; 
+      for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j]; 
+
+      for (j = 1; j < num_flied; j++){
+        input_m[j] = "";
+      }
 
       regulator_L.Kp = atof(str2);
       regulator_L.Ki = atof(str3);
@@ -519,59 +495,34 @@ void loop() {
     }
 
     else if (msg_type == 4){
-      // Установка новых PID-коэффициентов
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[1] += inputString[i];
-      }
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[2] += inputString[i];
+      // Установка новых PID-коэффициентов и запись их во Flash-память (постоянная память)
+
+      unsigned short num_flied = 7;
+
+      for (j = 1; j < num_flied; j++){
+        for (i = i+1; i < inputString.length()-1; i++){
+          if (inputString[i] == ';') break;
+          input_m[j] += inputString[i];
+        }
       }
 
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[3] += inputString[i];
-      }
+      char str2[input_m[1].length()]; 
+      char str3[input_m[2].length()];
+      char str4[input_m[3].length()]; 
+      char str5[input_m[4].length()]; 
+      char str6[input_m[5].length()]; 
+      char str7[input_m[6].length()]; 
 
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[4] += inputString[i];
-      }
-
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[5] += inputString[i];
-      }
-
-      for (i = i+1; i < inputString.length()-1; i++){
-        if (inputString[i] == ';') break;
-        input_m[6] += inputString[i];
-      }
-      char str2[input_m[1].length() + 1]; 
-      char str3[input_m[2].length() + 1];
-      char str4[input_m[3].length() + 1]; 
-      char str5[input_m[4].length() + 1]; 
-      char str6[input_m[5].length() + 1]; 
-      char str7[input_m[6].length() + 1]; 
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
-      str4[input_m[1].length()] = '\0';
-      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];
-      str4[input_m[2].length()] = '\0';
-      for(j=0; j < input_m[3].length(); j++) str4[j] = input_m[3][j];
-      str4[input_m[3].length()] = '\0';
-      for(j=0; j < input_m[4].length(); j++) str5[j] = input_m[4][j];
-      str4[input_m[4].length()] = '\0';
-      for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j];
-      str4[input_m[5].length()] = '\0';
-      for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j];
-      str4[input_m[6].length()] = '\0';
-      input_m[1] = "";
-      input_m[2] = "";
-      input_m[3] = "";
-      input_m[4] = "";
-      input_m[5] = "";
-      input_m[6] = "";
+      for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j]; 
+      for(j=0; j < input_m[3].length(); j++) str4[j] = input_m[3][j]; 
+      for(j=0; j < input_m[4].length(); j++) str5[j] = input_m[4][j]; 
+      for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j]; 
+      for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j]; 
+
+      for (j = 1; j < num_flied; j++){
+        input_m[j] = "";
+      }
 
       regulator_L.Kp = atof(str2);
       regulator_L.Ki = atof(str3);
@@ -592,7 +543,6 @@ void loop() {
       fleshMemory.putFloat("Kd_L", regulator_L.Kd); 
 
       fleshMemory.end();
-      
     }
         
     else if (msg_type == 5){
@@ -606,13 +556,13 @@ void loop() {
       );
     }
 
-
-
     // else{
     //   raise_error();
     // }
-  }
 
     inputString = "";
     stringComplete = false;
+
+  }
+
 }
