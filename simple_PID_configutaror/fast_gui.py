@@ -10,16 +10,16 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext
 import queue
 import time
-import re
 from collections import deque
 
 import matplotlib
 matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from matplotlib import style
 style.use('ggplot')
+
+import config as cfg
 
 class SerialBridgeGUI:
     """
@@ -949,13 +949,14 @@ class SerialBridgeGUI:
         """Start the GUI application"""
         self.root.mainloop()
 
+
 def main():
-    serial_port = '/dev/esp32'
-    serial_port = '/dev/ttyUSB0'  # Replace with your ESP32's serial port
-    baudrate = 115200
+    serial_port = cfg.SERIAL_PORT
+    baudrate = cfg.BAUDRATE
     
     app = SerialBridgeGUI(serial_port, baudrate)
     app.run()
+
 
 if __name__ == '__main__':
     main()
