@@ -23,24 +23,24 @@ controller_server:
     controller_plugins: ["FollowPath"]
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      lookahead_dist:           0.15
+      lookahead_dist:           0.17
       use_path_orientations:    false
       use_rotate_to_heading:    false
 
       # --- скорость ---
-      desired_linear_vel:       1.0       # м/с
-      max_robot_angular_vel:    20.0          # рад/с
-      max_angular_accel:        10.0          # рад/с²
-      use_velocity_scaled_lookahead_dist: false
-      regulate_turning_velocity: false
+      desired_linear_vel:       0.35         # м/с
+      max_robot_angular_vel:    7.0          # рад/с
+      max_angular_accel:        3.0          # рад/с²
+      use_velocity_scaled_lookahead_dist: true
+      regulate_turning_velocity: true
       
       # — коллизии и замедление —
-      use_collision_detection:             false
-      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_collision_detection:             true
+      max_allowed_time_to_collision_up_to_carrot: 2.0
       cost_scaling_dist:                   0.05   # ≤ inflation_radius
-      inflation_cost_scaling_factor:       0.05    # = costmap
-      use_cost_regulated_linear_velocity_scaling: false
-      use_regulated_linear_velocity_scaling:       false
+      inflation_cost_scaling_factor:       3.0    # = costmap
+      use_cost_regulated_linear_velocity_scaling: true
+      use_regulated_linear_velocity_scaling:       true
       
    
 
@@ -178,8 +178,8 @@ behavior_server:
     robot_base_frame: base_link
     transform_tolerance: 0.1
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
-    min_rotational_vel: 0.4
+    max_rotational_vel: 7.0
+    min_rotational_vel: 1.7
     rotational_acc_lim: 3.2
 
 waypoint_follower:
@@ -195,18 +195,18 @@ waypoint_follower:
 
 velocity_smoother:
   ros__parameters:
-    enabled: true
+    enabled: false
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [1.7, 0.0, 10.0]
-    min_velocity: [-1.7, 0.0, -10.0]
+    max_velocity: [0.5, 0.0, 2.0]
+    min_velocity: [-0.5, 0.0, -2.0]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: "odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
-    velocity_timeout: 2.0
+    velocity_timeout: 1.0
 
 collision_monitor:
   ros__parameters:

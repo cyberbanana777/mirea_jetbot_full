@@ -1,4 +1,4 @@
 
 # Config connection
-SERIAL_PORT = '/dev/esp32'
+SERIAL_PORT = '/dev/ttyUSB0'
 BAUDRATE = 115200

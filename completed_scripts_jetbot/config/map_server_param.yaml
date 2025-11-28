@@ -3,4 +3,4 @@ map_server:
     use_sim_time: false
     frame_id: map
     topic: /map
-    yaml_filename: /home/banana-killer/mirea_jetbots/rtk_challenge/src/completed_scripts_jetbot/maps/map.yaml
+    yaml_filename: /home/banana-killer/mirea_jetbots/jetbot_full_ws/src/completed_scripts_jetbot/maps/map.yaml

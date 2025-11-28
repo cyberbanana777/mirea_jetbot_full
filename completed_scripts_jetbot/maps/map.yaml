@@ -1,7 +1,7 @@
-image: /home/banana-killer/mirea_jetbots/rtk_challenge/src/completed_scripts_jetbot/maps/map.pgm
+image: /home/banana-killer/mirea_jetbots/jetbot_full_ws/src/completed_scripts_jetbot/maps/map.pgm
 mode: trinary
 resolution: 0.01
-origin: [-7.58, -7.68, 0]
+origin: [-3.45, -7.3, 0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.25

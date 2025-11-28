@@ -26,7 +26,7 @@ const float Pi = 3.14159;
 const float l = 0.117;
 const float r = 0.065/2;
 
-float max_frequency = 3.2;
+float max_frequency = 2.5;
 float max_vel = max_frequency * 2 * Pi * r;
 
 #define LED_PIN 13 // Оставлен для debug
@@ -401,8 +401,9 @@ void loop() {
       if (inputString[i] == ';') break;
       input_m[0] += inputString[i];
     }
-    char str1[input_m[0].length()];
+    char str1[input_m[0].length() + 1];
     for(j=0; j < input_m[0].length(); j++) str1[j] = input_m[0][j];
+    str1[input_m[0].length()] = '\0';
     input_m[0] = "";
 
     int msg_type = (int)atof(str1);
@@ -412,19 +413,23 @@ void loop() {
 
       unsigned short num_flied = 2;
 
-      for (j = 1; j < num_flied; j++){
+      for (j = 1; j <= num_flied; j++){
         for (i = i+1; i < inputString.length()-1; i++){
           if (inputString[i] == ';') break;
           input_m[j] += inputString[i];
         }
       }
 
-      char str2[input_m[1].length()]; 
-      char str3[input_m[2].length()];
+      char str2[input_m[1].length() + 1]; 
+      char str3[input_m[2].length() + 1];
+      
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
       for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j];      
-      
-      for (j = 1; j < num_flied; j++){
+
+      str2[input_m[1].length()] = '\0';
+      str3[input_m[2].length()] = '\0';
+
+      for (j = 1; j <= num_flied; j++){
         input_m[j] = "";
       }
 
@@ -436,19 +441,22 @@ void loop() {
 
       unsigned short num_flied = 2;
 
-      for (j = 1; j < num_flied; j++){
+      for (j = 1; j <= num_flied; j++){
         for (i = i+1; i < inputString.length()-1; i++){
           if (inputString[i] == ';') break;
           input_m[j] += inputString[i];
         }
       }
-      char str2[input_m[1].length()]; 
-      char str3[input_m[2].length()];
+      char str2[input_m[1].length() + 1]; 
+      char str3[input_m[2].length() + 1];
       
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
       for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j]; 
 
-      for (j = 1; j < num_flied; j++){
+      str2[input_m[1].length()] = '\0';
+      str3[input_m[2].length()] = '\0';
+
+      for (j = 1; j <= num_flied; j++){
         input_m[j] = "";
       }
 
@@ -458,21 +466,21 @@ void loop() {
     else if (msg_type == 3){
       // Установка новых PID-коэффициентов во временную память
 
-      unsigned short num_flied = 7;
+      unsigned short num_flied = 6;
 
-      for (j = 1; j < num_flied; j++){
+      for (j = 1; j <= num_flied; j++){
         for (i = i+1; i < inputString.length()-1; i++){
           if (inputString[i] == ';') break;
           input_m[j] += inputString[i];
         }
       }
 
-      char str2[input_m[1].length()]; 
-      char str3[input_m[2].length()];
-      char str4[input_m[3].length()]; 
-      char str5[input_m[4].length()]; 
-      char str6[input_m[5].length()]; 
-      char str7[input_m[6].length()]; 
+      char str2[input_m[1].length() + 1]; 
+      char str3[input_m[2].length() + 1];
+      char str4[input_m[3].length() + 1]; 
+      char str5[input_m[4].length() + 1]; 
+      char str6[input_m[5].length() + 1]; 
+      char str7[input_m[6].length() + 1]; 
 
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
       for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j]; 
@@ -481,7 +489,14 @@ void loop() {
       for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j]; 
       for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j]; 
 
-      for (j = 1; j < num_flied; j++){
+      str2[input_m[1].length()] = '\0';
+      str3[input_m[2].length()] = '\0';
+      str4[input_m[3].length()] = '\0';
+      str5[input_m[4].length()] = '\0';
+      str6[input_m[5].length()] = '\0';
+      str7[input_m[6].length()] = '\0';
+
+      for (j = 1; j <= num_flied; j++){
         input_m[j] = "";
       }
 
@@ -497,21 +512,21 @@ void loop() {
     else if (msg_type == 4){
       // Установка новых PID-коэффициентов и запись их во Flash-память (постоянная память)
 
-      unsigned short num_flied = 7;
+      unsigned short num_flied = 6;
 
-      for (j = 1; j < num_flied; j++){
+      for (j = 1; j <= num_flied; j++){
         for (i = i+1; i < inputString.length()-1; i++){
           if (inputString[i] == ';') break;
           input_m[j] += inputString[i];
         }
       }
 
-      char str2[input_m[1].length()]; 
-      char str3[input_m[2].length()];
-      char str4[input_m[3].length()]; 
-      char str5[input_m[4].length()]; 
-      char str6[input_m[5].length()]; 
-      char str7[input_m[6].length()]; 
+      char str2[input_m[1].length() + 1]; 
+      char str3[input_m[2].length() + 1];
+      char str4[input_m[3].length() + 1]; 
+      char str5[input_m[4].length() + 1]; 
+      char str6[input_m[5].length() + 1]; 
+      char str7[input_m[6].length() + 1]; 
 
       for(j=0; j < input_m[1].length(); j++) str2[j] = input_m[1][j];
       for(j=0; j < input_m[2].length(); j++) str3[j] = input_m[2][j]; 
@@ -520,7 +535,15 @@ void loop() {
       for(j=0; j < input_m[5].length(); j++) str6[j] = input_m[5][j]; 
       for(j=0; j < input_m[6].length(); j++) str7[j] = input_m[6][j]; 
 
-      for (j = 1; j < num_flied; j++){
+      str2[input_m[1].length()] = '\0';
+      str3[input_m[2].length()] = '\0';
+      str4[input_m[3].length()] = '\0';
+      str5[input_m[4].length()] = '\0';
+      str6[input_m[5].length()] = '\0';
+      str7[input_m[6].length()] = '\0';
+
+
+      for (j = 1; j <= num_flied; j++){
         input_m[j] = "";
       }
 
