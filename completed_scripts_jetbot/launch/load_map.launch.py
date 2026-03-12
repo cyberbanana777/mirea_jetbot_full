@@ -26,8 +26,8 @@ def launch_setup(context, *args, **kwargs):
 
     path_to_pkg = get_package_share_directory('completed_scripts_jetbot')
 
-    acml_config_yaml_real = os.path.join(path_to_pkg, 'config', 'amcl_config_real.yaml')
-    acml_config_yaml_sim = os.path.join(path_to_pkg, 'config', 'amcl_config_sim.yaml')
+    acml_config_yaml_real = os.path.join(path_to_pkg, 'config', 'amcl_params_real.yaml')
+    acml_config_yaml_sim = os.path.join(path_to_pkg, 'config', 'amcl_params_sim.yaml')
     map_file = os.path.join(path_to_pkg, 'maps', 'map.yaml')
     # map_file = os.path.join(path_to_pkg, 'maps', 'G210_with_boxes_map.yaml')
 
@@ -115,7 +115,7 @@ def generate_launch_description():
     
     use_sim_time_arg = DeclareLaunchArgument(
         'use_sim_time',
-        default_value='false',
+        default_value='true',
         description='Use simulation (Gazebo) clock if true',
         choices=['true', 'false'],
     )
