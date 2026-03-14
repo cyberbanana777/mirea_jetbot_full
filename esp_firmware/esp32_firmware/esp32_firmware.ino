@@ -121,9 +121,6 @@ int pros;
 float bus_voltage, shunt_v, current;
 
 
-
-
-
 // Настройки для записи в постоянную память
 #define RW_MODE false
 #define RO_MODE true
@@ -333,8 +330,8 @@ void loop() {
 
   if (millis() - im_timer > im_timer_timeout){
     // Аварийная остановка
-    TargetRight = 0;
-    TargetLeft = 0;
+    TargetRight = 0.0;
+    TargetLeft = 0.0;
   }
 
   delta = micros() - tmr;
