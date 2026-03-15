@@ -24,10 +24,9 @@ const float min_voltage = 3.3 * 3;
 // Пины энкодеров
 #define PIN_R_A 34  // Пин для сигнала 1
 #define PIN_R_B 35  // Пин для сигнала 2
-#define PIN_L_A 33  // Пин для сигнала 3
-#define PIN_L_B 32  // Пин для сигнала 4
-#define LED_PIN 13 // Оставлен для debug
-
+#define PIN_L_A 32  // Пин для сигнала 3
+#define PIN_L_B 33  // Пин для сигнала 4
+#define LED_PIN 2 // Оставлен для debug
 
 
 // Коэффициенты по умолчанию для регуляторов
@@ -47,7 +46,7 @@ float dt = 30;
 const unsigned long timer_timeout = dt * 1000; //мкс
 // Для остановки после 5 секунд простоя
 const unsigned int im_timer_timeout = 5000;
-const unsigned long displayInterval = 200; // обновление каждые 500 мс
+const unsigned long displayInterval = 200; 
 
 
 
@@ -104,7 +103,7 @@ INA219 INA(0x41);
 
 // ========================================================================================================
 
-GyverOLED<SSD1306_128x32, OLED_BUFFER> oled;  // SSD1306 128x64 с буферизацией
+GyverOLED<SSD1306_128x32, OLED_BUFFER> oled;  // SSD1306 128x32 с буферизацией
 
 void init_oled(){
   oled.init();            // инициализация дисплея
@@ -209,6 +208,34 @@ void parseJetsonMessage(String input){
   wifi_ip = parts[3];
 }
 
+float convert_ticks_to_freq(long ticks, long timeout_micros, char dir){
+  /*
+  ticks - счётчик тактов из прерываний
+  timeout_micros - время замера количества меток
+  dir - направеление. Может быть 'r', 'l'. При 'l'  происходит инвертирование значения, 
+  необходиомое для нормальной работы логики. Чтобы при движении вперёд или назад
+  знаки угловых скоростей колёс были одинаковые
+  */
+  const float steps_per_tick = 1.0 / 4.0; // 4 импульса на 1 шаг
+  const float turn_per_step = 1.0 / 270.0; // 270 шагов в 1 полном обороте
+  const double micros_to_sec= 1.0 / 1000000.0; 
+  float timeout_sec = timeout_micros * micros_to_sec;
+  float result = turn_per_step * steps_per_tick * ticks / timeout_sec;
+  
+  // для левого колеса инвертируем частоту
+  if(dir == 'l'){
+    result = result * (-1);
+  }
+  else if(dir == 'r'){
+    result = result * 1;
+  }
+  else{
+    raise_error("Error in 'convert_ticks_to_freq'! Invalid direcrion (dir)");
+  }
+
+  return result;
+}
+
 void read_serial1(){
   while (Serial1.available()) {
     char inChar = (char)Serial1.read();
@@ -253,45 +280,54 @@ void print_telemetry(){
   oled.update();  // отправляем буфер на дисплей
 }
 
-#define LED_PIN 13 // Оставлен для debug
 
 
-void raise_error(){
+void raise_error(String error_text){
   while(true){
     digitalWrite(LED_PIN, HIGH);
     delay(500);
     digitalWrite(LED_PIN, LOW);
     delay(500);
+    Serial.println(error_text);
+  }
+}
+
+void check_exec(bool trigger, String error_text){
+  if(!trigger){
+    raise_error(error_text);
   }
 }
 
 void setup() {
 
+  Serial.begin(115200);
+  Serial1.begin(115200);
+
   init_interraptions();
   init_motor_control();
 
   // Светодиод ошибки
-  pinMode(LED_PIN, INPUT); // Оставлен для debug
+  pinMode(LED_PIN, OUTPUT); // Индикатор ошибок
 
-  // ===================== ИНИЦИАЛИЗАЦИЯ ДИСПЛЕЯ (GyverOLED) =====================
-  Wire.begin();           // I2C на пинах 21 (SDA), 22 (SCL)
-  INA.begin();
+  // ===================== ИНИЦИАЛИЗАЦИЯ ДИСПЛЕЯ (GyverOLED) и ЦИФРОВОГО МУЛЬТИМЕТРА ====================
+  check_exec(Wire.begin(), "Error! Failed to init I2C bus.");           // I2C на пинах 21 (SDA), 22 (SCL)
+  check_exec(INA.begin(), "Error! Failed to init INA219 module.");  
   init_oled();
-
   // =========================================================================
 
-  Serial.begin(115200);
-  Serial1.begin(115200);    // Порт 2 (пины TX2=17, RX2=16 по умолчанию)
+
   mainInputString.reserve(250);
   addictionInputString.reserve(250);
   
   delay(100);
 
+  // =================== РАБОТА С ПОСТОЯННОЙ ПАМЯТЬЮ ==========================
   fleshMemory.begin("Memory1", RO_MODE);
   bool tpInit = fleshMemory.isKey("nvsInit");
 
+  // Запись в постоянную память коэффициентов ПИД-регуляторов
   if (tpInit == false) {
-
+ 
     fleshMemory.end();                             
     fleshMemory.begin("Memory1", RW_MODE);
 
@@ -307,7 +343,9 @@ void setup() {
     
     fleshMemory.end();
   } 
-  
+
+
+  // Получение коэффициентов ПИД-регуляторов из постоянной памяти
   else {
 
     regulator_R.Kp = fleshMemory.getFloat("Kp_R"); 
@@ -320,7 +358,7 @@ void setup() {
 
     fleshMemory.end();
   }
-  
+  // ==========================================================================
   motorWrite(MOTOR_R, 0.0);
   motorWrite(MOTOR_L, 0.0);
 }
@@ -344,16 +382,16 @@ void loop() {
     regulator_L.setpoint = TargetLeft; 
     
     //Подсчёт скорости
-    RealFrequencyRight = (((float)global_pos_R*1000000)/(270*4*timer_timeout));
-    RealFrequencyLeft = (((float)global_pos_L*1000000)/(270*4*timer_timeout));
+    RealFrequencyRight = convert_ticks_to_freq(global_pos_R, timer_timeout, 'r'); 
+    RealFrequencyLeft = convert_ticks_to_freq(global_pos_L, timer_timeout, 'l'); 
     global_pos_R = 0;
     global_pos_L = 0;
     
     double vel_dt = timer_timeout/1000; // ms
     double linear_vel_x = (RealFrequencyRight + RealFrequencyLeft)*2*Pi*r/2;
     double angular_vel_z = (RealFrequencyRight - RealFrequencyLeft)*2*Pi*r/l;
-    double left_wheel_velocity = RealFrequencyLeft * 2 * Pi * r;
-    double right_wheel_velocity = RealFrequencyRight  * 2 * Pi * r;
+    double left_wheel_angular_velocity_rad = RealFrequencyLeft * 2 * Pi * r;
+    double right_wheel_angular_velocity_rad =RealFrequencyRight  * 2 * Pi * r;
     double delta_heading = angular_vel_z * vel_dt/1000; //radians
     double cos_h = cos(heading_);
     double sin_h = sin(heading_);
@@ -363,7 +401,7 @@ void loop() {
     x_pos_ += delta_x;
     y_pos_ += delta_y;
     heading_ += delta_heading;
-    odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, left_wheel_velocity, right_wheel_velocity);
+    odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, left_wheel_angular_velocity_rad, right_wheel_angular_velocity_rad);
 
     // Отправка в ПИДы расчитанного значения скорости 
     regulator_R.input = RealFrequencyRight / max_contructive_velocity;
