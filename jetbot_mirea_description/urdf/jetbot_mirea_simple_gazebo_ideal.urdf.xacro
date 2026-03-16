@@ -48,7 +48,7 @@
     <xacro:include filename="$(find jetbot_mirea_description)/urdf/common_properties.xacro"/>
     <xacro:include filename="$(find jetbot_mirea_description)/urdf/gazebo_properties.xacro"/>
 
-
+    <!--
     <link name="base_footprint"/>
     
     <joint name="base_joint" type="fixed">
@@ -56,6 +56,7 @@
         <child link="base_link"/>
         <origin xyz="0.0 0.0 ${wheel_big_radius + base_height/2}" rpy="0 0 0"/>
     </joint>
+    -->
 
     <link name="base_link">
         <visual>

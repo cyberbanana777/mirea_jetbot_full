@@ -1,7 +1,7 @@
 /amcl:
   ros__parameters:
     # 1.1. Фреймы координат
-    base_frame_id: base_footprint
+    base_frame_id: base_link
     odom_frame_id: odom
     global_frame_id: map
     tf_broadcast: true
@@ -32,7 +32,7 @@
     always_reset_initial_pose: false
     first_map_only: false
     transform_tolerance: 0.5
-    save_pose_rate: 0.1
+    save_pose_rate: 0.01
 
     # 2. Настройка модели движения (шумы)
     robot_model_type: nav2_amcl::DifferentialMotionModel

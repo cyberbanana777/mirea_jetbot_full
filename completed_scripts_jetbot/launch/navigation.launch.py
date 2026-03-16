@@ -46,7 +46,8 @@ def launch_setup(context, *args, **kwargs):
                 ])
             ]),
             launch_arguments={
-                'params_file': path_to_config_1
+                'params_file': path_to_config_1,
+                'use_sim_time': 'false',
             }.items(),
             condition=IfCondition(localization_config_1_condition)
         )
@@ -61,7 +62,8 @@ def launch_setup(context, *args, **kwargs):
                 ])
             ]),
             launch_arguments={
-                'params_file': path_to_config_2
+                'params_file': path_to_config_2,
+                'use_sim_time': 'true',    
             }.items(),
             condition=IfCondition(localization_config_2_condition)
         )
