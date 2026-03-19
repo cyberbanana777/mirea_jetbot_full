@@ -43,7 +43,7 @@ def generate_launch_description():
         namespace='low_level',
         parameters=[{
             'frame_id': 'odom',
-            'child_frame_id': 'base_footprint',
+            'child_frame_id': 'base_link',
         }],
         output='screen',
         remappings=[

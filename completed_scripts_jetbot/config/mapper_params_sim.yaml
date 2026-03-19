@@ -1,4 +1,3 @@
-
 slam_toolbox:
   ros__parameters:
 
@@ -19,7 +18,7 @@ slam_toolbox:
     use_scan_barycenter: false     # Использовать геометрический центр скана (обычно false)
 
     # Параметры построения карты
-    resolution: 0.02               # Разрешение карты: размер клетки в метрах
+    resolution: 0.02              # Разрешение карты: размер клетки в метрах
     max_laser_range: 10.0           # Максимальное расстояние луча лидара (должно совпадать с датчиком)
     minimum_time_interval: 0.01    # Минимальное время между обработкой сканов
     transform_publish_period: 0.01 # Как часто публиковать transform map -> odom
@@ -31,7 +30,7 @@ slam_toolbox:
     temporal_update_angle: 0.0            # [Отключено] автообновление по углу
 
     # Частота обновления карты и графа
-    occupancy_map_update_frequency: 1.0   # Частота обновления карты (Гц)
+    occupancy_map_update_frequency: 10.0   # Частота обновления карты (Гц)
     optimization_frequency: 1.0           # Частота оптимизации графа (Гц)
     optimizer_iterations: 10              # Кол-во итераций оптимизатора за проход
 
