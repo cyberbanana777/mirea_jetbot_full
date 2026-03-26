@@ -30,16 +30,16 @@ const float min_voltage = 3.3 * 3;
 
 
 // Коэффициенты по умолчанию для регуляторов
-float Kp_R = 0.7;
+float Kp_R = 4.0;
 float Ki_R = 0.0;
 float Kd_R = 0.000;
 
-float Kp_L = 0.7; 
+float Kp_L = 4.0; 
 float Ki_L = 0.0;
 float Kd_L = 0.000;
 
 // Частота дискретизации для ПИДов
-float dt = 5s;
+float dt = 5;
 
 
 // === Таймеры ===
