@@ -6,6 +6,7 @@
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 
@@ -56,7 +57,10 @@ def generate_launch_description():
             name='laser_filter',
             output='screen',
             parameters=[{
-                'output_frame_id': LaunchConfiguration('output_frame_id'),
+                'output_frame_id': ParameterValue(
+                    LaunchConfiguration('output_frame_id'),
+                    value_type=str
+                ),
                 'start_angle_deg': LaunchConfiguration('start_angle_deg'),
                 'end_angle_deg': LaunchConfiguration('end_angle_deg'),
                 'input_topic': LaunchConfiguration('input_topic'),
