@@ -30,16 +30,16 @@ const float min_voltage = 3.3 * 3;
 
 
 // Коэффициенты по умолчанию для регуляторов
-float Kp_R = 4.0;
+float Kp_R = 0.5;
 float Ki_R = 0.0;
 float Kd_R = 0.000;
 
-float Kp_L = 4.0; 
+float Kp_L = 0.5; 
 float Ki_L = 0.0;
 float Kd_L = 0.000;
 
 // Частота дискретизации для ПИДов
-float dt = 5;
+float dt = 25; // Было 5
 
 
 // === Таймеры ===
@@ -383,10 +383,12 @@ void loop() {
     regulator_L.setpoint = TargetLeft; 
     
     //Подсчёт скорости
+
     RealFrequencyRight = convert_ticks_to_freq(global_pos_R, timer_timeout, 'r'); 
     RealFrequencyLeft = convert_ticks_to_freq(global_pos_L, timer_timeout, 'l'); 
     global_pos_R = 0;
     global_pos_L = 0;
+
     
     double vel_dt = timer_timeout/1000; // ms
     double linear_vel_x = (RealFrequencyRight + RealFrequencyLeft)*2*Pi*r/2;
