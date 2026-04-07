@@ -39,7 +39,7 @@ float Ki_L = 0.0;
 float Kd_L = 0.000;
 
 // Частота дискретизации для ПИДов
-float dt = 25; // Было 5
+float dt = 30; // Было 5
 
 
 // === Таймеры ===
@@ -48,8 +48,17 @@ const unsigned long timer_timeout = dt * 1000; //мкс
 const unsigned int im_timer_timeout = 5000;
 const unsigned long displayInterval = 200; 
 
+// Фильтры для скоростей колёс (экспоненциальное сглаживание)
+float filtered_FreqRight = 0.0;
+float filtered_FreqLeft  = 0.0;
+// const float alpha = 0.05;  // коэффициент фильтра (0...1). Чем меньше, тем сильнее сглаживание
 
-
+// Простое скользящее среднее для скоростей колёс
+const int WINDOW_SIZE = 5;               // размер окна (количество измерений)
+float freq_buffer_R[WINDOW_SIZE];        // буфер для правого колеса
+float freq_buffer_L[WINDOW_SIZE];        // буфер для левого колеса
+int buffer_index = 0;                    // текущий индекс в буфере
+bool buffer_filled = false;              // флаг, что буфер полностью заполнен
 
 
 // =======================================================================================================================
@@ -362,6 +371,12 @@ void setup() {
   // ==========================================================================
   motorWrite(MOTOR_R, 0.0);
   motorWrite(MOTOR_L, 0.0);
+
+  // Очистка буферов скользящего среднего
+  for (int i = 0; i < WINDOW_SIZE; i++) {
+      freq_buffer_R[i] = 0.0;
+      freq_buffer_L[i] = 0.0;
+}
 }
 
 
@@ -389,12 +404,48 @@ void loop() {
     global_pos_R = 0;
     global_pos_L = 0;
 
+    // Применяем экспоненциальный фильтр к сырой частоте (или сразу к нормированной)
+    // filtered_FreqRight = alpha * RealFrequencyRight + (1.0 - alpha) * filtered_FreqRight;
+    // filtered_FreqLeft  = alpha * RealFrequencyLeft  + (1.0 - alpha) * filtered_FreqLeft;
+
+    // === ПРОСТОЕ СКОЛЬЗЯЩЕЕ СРЕДНЕЕ ===
+    // Сохраняем новое измерение в буфер
+    freq_buffer_R[buffer_index] = RealFrequencyRight;
+    freq_buffer_L[buffer_index] = RealFrequencyLeft;
+
+    // Увеличиваем индекс и зацикливаем
+    buffer_index++;
+    if (buffer_index >= WINDOW_SIZE) {
+        buffer_index = 0;
+        buffer_filled = true;   // после первого полного прохода буфер считается заполненным
+    }
+
+    // Вычисляем среднее, если буфер заполнен хотя бы один раз
+    if (buffer_filled) {
+        float sum_R = 0.0, sum_L = 0.0;
+        for (int i = 0; i < WINDOW_SIZE; i++) {
+            sum_R += freq_buffer_R[i];
+            sum_L += freq_buffer_L[i];
+        }
+        filtered_FreqRight = sum_R / WINDOW_SIZE;
+        filtered_FreqLeft  = sum_L / WINDOW_SIZE;
+    } else {
+        // Пока буфер не заполнен, используем сырые данные (или можно частичное среднее)
+        float sum_R = 0.0, sum_L = 0.0;
+        for (int i = 0; i <= buffer_index; i++) {
+            sum_R += freq_buffer_R[i];
+            sum_L += freq_buffer_L[i];
+        }
+        filtered_FreqRight = sum_R / (buffer_index + 1);
+        filtered_FreqLeft  = sum_L / (buffer_index + 1);
+    }
+
     
     double vel_dt = timer_timeout/1000; // ms
-    double linear_vel_x = (RealFrequencyRight + RealFrequencyLeft)*2*Pi*r/2;
-    double angular_vel_z = (RealFrequencyRight - RealFrequencyLeft)*2*Pi*r/l;
-    double left_wheel_angular_velocity_rad = RealFrequencyLeft * 2 * Pi * r;
-    double right_wheel_angular_velocity_rad =RealFrequencyRight  * 2 * Pi * r;
+    double linear_vel_x = (filtered_FreqRight + filtered_FreqLeft)*2*Pi*r/2;
+    double angular_vel_z = (filtered_FreqRight - filtered_FreqLeft)*2*Pi*r/l;
+    double left_wheel_angular_velocity_rad = filtered_FreqLeft * 2 * Pi * r;
+    double right_wheel_angular_velocity_rad =filtered_FreqRight  * 2 * Pi * r;
     double delta_heading = angular_vel_z * vel_dt/1000; //radians
     double cos_h = cos(heading_);
     double sin_h = sin(heading_);
@@ -405,14 +456,15 @@ void loop() {
     y_pos_ += delta_y;
     heading_ += delta_heading;
     odomPublish(x_pos_, y_pos_, heading_, linear_vel_x, angular_vel_z, left_wheel_angular_velocity_rad, right_wheel_angular_velocity_rad);
+    // Serial.println(left_wheel_angular_velocity_rad);
 
     // Отправка в ПИДы расчитанного значения скорости 
-    regulator_R.input = RealFrequencyRight / max_contructive_velocity;
-    regulator_L.input = RealFrequencyLeft / max_contructive_velocity;
+    regulator_R.input = filtered_FreqRight / max_contructive_velocity;
+    regulator_L.input = filtered_FreqLeft / max_contructive_velocity;
 
-    // Подача на моторы "исправленного" сигнала  
-    motorWrite(MOTOR_R, regulator_R.getResult());
-    motorWrite(MOTOR_L, regulator_L.getResult());
+    // Подача на моторы "исправленного" сигнал
+    motorWrite(MOTOR_R, regulator_R.getResultNow());
+    motorWrite(MOTOR_L, regulator_L.getResultNow());
   }
 
     //Обработка входного значения
