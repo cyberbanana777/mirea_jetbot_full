@@ -9,6 +9,14 @@
 #include <Wire.h>                     
 #include <Adafruit_PWMServoDriver.h> 
 #include <stdio.h>
+
+// перед подключением библиотеки можно добавить настройки:
+// сделает часть вычислений целочисленными, что чуть (совсем чуть!) ускорит код
+// #define PID_INTEGER
+
+// режим, при котором интегральная составляющая суммируется только в пределах указанного количества значений
+#define PID_INTEGRAL_WINDOW 40
+
 #include <GyverOLED.h>
 #include "INA219.h"
 
