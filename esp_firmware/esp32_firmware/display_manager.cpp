@@ -8,21 +8,19 @@ bool DisplayManager::begin(const char* version) {
   _oled.clear();
   _oled.home();
   _oled.println("ESP32 ready");
-  _oled.print(version);
+  _oled.print("Firmware v");
+  _oled.println(version);
+  _oled.println(""); 
+  _oled.println("       (*^.^*)"); 
   _oled.update();
-  delay(1000);
+  delay(2000);
   return true;
 }
 
-bool DisplayManager::reinitialize() {
+bool DisplayManager::reinitialize(const char* version) {
   // GyverOLED::init() настраивает дисплей заново
-  // Если не получилось, возвращаем false
   _oled.init();
   _oled.clear();
-  _oled.home();
-  _oled.print("ESP32 ready");
-  _oled.update();
-  delay(1000);  // небольшая задержка, чтобы дисплей успел обработать
   return true;
 }
 
@@ -71,7 +69,7 @@ void DisplayManager::_render(const String& ssid, const String& ip, const String&
     _oled.print(batteryPercent);
     _oled.println("%");
     _oled.println("");
-    _oled.print("CHARGE ME, PLS!");
+    _oled.println("CHARGE ME, PLS! (X.X)");
 
     // Ток и процент можно не выводить, чтобы не загромождать
   } else {

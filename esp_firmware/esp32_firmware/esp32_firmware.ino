@@ -152,7 +152,7 @@ void checkI2CDevices() {
     oledErrors++;
     if (oledErrors >= MAX_I2C_ERRORS) {
       oledOk = false;
-      if (display.reinitialize()) {
+      if (display.reinitialize((char*)VERSION)) {
         oledOk = true;
         oledErrors = 0;
         Serial.println("OLED reinitialized");

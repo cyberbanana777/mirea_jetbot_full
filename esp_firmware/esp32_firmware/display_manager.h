@@ -14,7 +14,7 @@ public:
   bool begin(const char* version);
 
   // Попытаться переинициализировать дисплей после сбоя I²C
-  bool reinitialize();
+  bool reinitialize(const char* version);
 
   // Обновляет содержимое экрана в соответствии с текущим состоянием батареи.
   // Вызывайте в каждом цикле loop().
