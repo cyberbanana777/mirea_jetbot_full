@@ -5,30 +5,30 @@
 
 class SerialReceiver {
 public:
-    /**
-     * @param stream   – ссылка на Serial-порт (Serial, Serial1 и т.д.)
-     * @param startChar – символ начала сообщения (по умолчанию '$')
-     * @param endChar   – символ конца сообщения (по умолчанию '#')
-     */
+    // Максимальная длина одного сообщения, включая $ и #
+    static const size_t BUFFER_SIZE = 128;  // заведомо достаточно для протокола
+
     SerialReceiver(Stream &stream, char startChar = '$', char endChar = '#');
 
-    /** Вызывайте в loop() для обработки поступающих байтов */
     void update();
 
-    /** Возвращает true, если получено завершённое сообщение (ещё не прочитанное) */
-    bool available();
+    bool available() const;                // true, когда полное сообщение принято
 
-    /** Возвращает сообщение БЕЗ обрамляющих символов и сбрасывает флаг */
-    String getMessage();
+    // Возвращает указатель на внутренний буфер с сообщением (без $ и #)
+    const char* getMessage();
 
-    /** Принудительный сброс состояния (например, при ошибке) */
+    // Сбрасывает состояние, можно вызвать после обработки или при ошибке
     void reset();
+
+    // Удобный метод для копирования сообщения в пользовательский буфер
+    void copyMessage(char* dest, size_t maxLen) const;
 
 private:
     Stream &_stream;
     char _startChar;
     char _endChar;
-    String _buffer;
+    char _buffer[BUFFER_SIZE];  // статический приёмный буфер
+    size_t _index;              // текущая позиция записи
     bool _receiving;
     bool _complete;
 };

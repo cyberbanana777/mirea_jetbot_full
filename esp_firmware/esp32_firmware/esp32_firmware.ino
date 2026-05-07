@@ -2,47 +2,32 @@
 // SPDX-License-Identifier: MIT
 // Details in the LICENSE file in the root of the package.
 
-/*
-TODO:
-
+/**
+  @author Alice Zenina and Alexander Grachev RTU MIREA (Russia)
+  @date 07.05.2026
+  @version 2.0.0
+*/
+const char* VERSION = "2.0.0";
+/**
+  @todo
 === Требуется, но не срочно ===:
 
-1. Заменить String в odomPublish / regulatorsCoefficientsPublish на
-статический буфер + snprintf (п.11)
-  odomPublish и regulatorsCoefficientsPublish вызываются часто и создают
-  временные String. Переписать на snprintf в статический буфер — уберёт
-  фрагментацию кучи.
-
-2. Анти‑виндап для интегратора ПИД (п.6)
+1. Анти‑виндап для интегратора ПИД (п.6)
   Хотя GyverPID имеет setLimits, явный clamping интегратора при насыщении
   выхода сделает поведение робота устойчивее при упоре в препятствие.
 
 
 === Было бы неплохо ===:
 
-1. Использование std::string или std::array<char> в парсере команд
-  CommandParser::parse сейчас работает с const char* от String, но сама строка
-  всё ещё String. Можно полностью перейти на статические буферы и избежать
-  выделений памяти при приёме команд.
-
-2. Обработка ошибок I²C в момент работы
+1. Обработка ошибок I²C в момент работы
   Добавить флаг истечения связи с INA219 или PCA9685 и попытку
   переинициализации без перезагрузки.
 
-3. Watchdog для моторов
-  Если по какой-то причине controller.update() перестанет вызываться
-  (зависание), аппаратный watchdog ESP32 перезагрузит контроллер.Можно
-  добавить программный watchdog, который будет останавливать моторы,
-  если цикл завис.
-
-4. Индикация наличия связи (heartbeat) на дисплее
+2. Индикация наличия связи (heartbeat) на дисплее
   Мигающая точка или значок, показывающий, что команды поступают.
 
-5. Аппаратный контроль напряжения прямо в драйвере моторов (маленькое напряжение питающей шины - остановка колом).
-  При падении напряжения ниже критического — аппаратно отключать моторы,
-  не дожидаясь программного цикла.
 
-6. Перейти на новую библиотеку Gyver
+3. Перейти на новую библиотеку Gyver
   Больше возможностей, больше оптимизации.
 */
 
@@ -77,7 +62,7 @@ SerialReceiver jetsonReceiver(Serial1);                // Jetson Nano
 
 
 /**
- * Проверяет наличие устройства на заданном I²C-адресе.
+ * @brief Проверяет наличие устройства на заданном I²C-адресе.
  * @param address - 7-битный адрес устройства (без сдвига, как передаётся в Wire)
  * @return true, если устройство ответило ACK, иначе false
  */
@@ -105,44 +90,41 @@ String wifi_ip = "";
 float bus_voltage, shunt_v, current;
 int pros;
 
-void parseJetsonMessage(const String& fullMessage) {
-  // fullMessage = "$тип;ssid;password;ip#"
-  if (fullMessage.length() < 3) return;
-  // Вырезаем содержимое между '$' и '#'
-  String trimmed = fullMessage.substring(1, fullMessage.length() - 1);
-  // trimmed = "тип;ssid;password;ip"
+void parseJetsonMessage(const char* fullMessage) {
+    if (!fullMessage || fullMessage[0] != '$') return;
+    // Копируем во временный буфер, чтобы не портить оригинал (если нужно)
+    char buf[128];
+    strncpy(buf, fullMessage, 127);
+    buf[127] = '\0';
 
-  String parts[4];
-  int count = 0;
-  int start = 0;
-  int semicolon = trimmed.indexOf(';');
-  while (semicolon != -1 && count < 4) {
-    parts[count++] = trimmed.substring(start, semicolon);
-    start = semicolon + 1;
-    semicolon = trimmed.indexOf(';', start);
-  }
-  if (count < 4) {
-    parts[count++] = trimmed.substring(start);
-  }
+    // Удаляем '$' и '#'
+    char* start = buf + 1;
+    char* end = strchr(start, '#');
+    if (end) *end = '\0';
 
-  // parts[0] – тип (не используется), parts[1] – SSID, parts[2] – пароль, parts[3] – IP
-  if (count >= 4) {
-    wifi_ssid = parts[1];
-    wifi_password = parts[2];
-    wifi_ip = parts[3];
-  }
+    char* parts[4];
+    int count = 0;
+    char* token = strtok(start, ";");
+    while (token && count < 4) {
+        parts[count++] = token;
+        token = strtok(nullptr, ";");
+    }
+    if (count >= 4) {
+        wifi_ssid = parts[1];
+        wifi_password = parts[2];
+        wifi_ip = parts[3];
+    }
 }
 
-
+/**
+* @brief Преобразет тики в частоту вращения (об/с)
+* @param ticks - счётчик тактов из прерываний
+* @param dir - направеление. Может быть 'r', 'l'. При 'l'  происходит инвертирование значения, 
+необходиомое для нормальной работы логики. Чтобы при движении вперёд или назад
+знаки угловых скоростей колёс были одинаковые
+* @return result, обороты в секунду типа float32_t.
+*/
 float convert_ticks_to_freq(long ticks, long timeout_micros, char dir) {
-  /**
-  * Преобразет тики в частоту вращения (об/с)
-  * @param ticks - счётчик тактов из прерываний
-  * @param dir - направеление. Может быть 'r', 'l'. При 'l'  происходит инвертирование значения, 
-  необходиомое для нормальной работы логики. Чтобы при движении вперёд или назад
-  знаки угловых скоростей колёс были одинаковые
-  * @return result, обороты в секунду типа float32_t.
-  */
   const float steps_per_tick = 1.0 / 4.0;   // 4 импульса на 1 шаг
   const float turn_per_step = 1.0 / 270.0;  // 270 шагов в 1 полном обороте
   const double micros_to_sec = 1.0 / 1000000.0;
@@ -176,7 +158,7 @@ void setup() {
   error_manager.check_exec(controller.begin(), "Error! Failed to init motor controller");
   error_manager.check_exec(INA.begin(), "Error! Failed to init INA219 module.");
 
-  error_manager.check_exec(display.begin(), "Error! OLED init failed.");
+  error_manager.check_exec(display.begin((char*)VERSION), "Error! OLED init failed.");
 
   delay(100);
 
@@ -194,7 +176,7 @@ void loop() {
   mainReceiver.update();
   jetsonReceiver.update();
 
-  if (millis() - emergency_timer > emergency_timer_timeout) {
+  if ((millis() - emergency_timer > emergency_timer_timeout) || (bus_voltage < min_voltage)) {
     // Аварийная остановка
     controller.setWheelSpeeds(0.0, 0.0);
   }
@@ -241,8 +223,8 @@ void loop() {
   //Обработка входного значения
   if (mainReceiver.available()) {
     emergency_timer = millis();
-    String raw = mainReceiver.getMessage();
-    ParsedCommand cmd = CommandParser::parse(raw);
+    const char* raw_0 = mainReceiver.getMessage();  // теперь это C-строка
+    ParsedCommand cmd = CommandParser::parse(raw_0);
 
     switch (cmd.type) {
       case Command::SET_TWIST:
@@ -292,8 +274,8 @@ void loop() {
 
   // Обработка сообщения от Jetson с информацией о wifi
   if (jetsonReceiver.available()) {
-    String raw_ = jetsonReceiver.getMessage();
-    parseJetsonMessage(raw_);
+    const char* raw_1 = jetsonReceiver.getMessage();
+    parseJetsonMessage(raw_1);
   }
 
 

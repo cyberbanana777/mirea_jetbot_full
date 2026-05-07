@@ -11,7 +11,7 @@ public:
     DisplayManager(unsigned long interval = 200, unsigned long blinkPeriod = 1500);
 
     // Инициализация дисплея, вывод стартового сообщения
-    bool begin();
+    bool begin(const char* version);
 
     // Обновляет содержимое экрана в соответствии с текущим состоянием батареи.
     // Вызывайте в каждом цикле loop().

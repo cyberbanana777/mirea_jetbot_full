@@ -9,11 +9,12 @@ DisplayManager::DisplayManager(unsigned long interval, unsigned long blinkPeriod
     , _showWarning(false)
 {}
 
-bool DisplayManager::begin() {
+bool DisplayManager::begin(const char* version) {
     _oled.init();
     _oled.clear();
     _oled.home();
-    _oled.print("ESP32 ready");
+    _oled.println("ESP32 ready");
+    _oled.print(version);
     _oled.update();
     delay(1000);
     return true;
