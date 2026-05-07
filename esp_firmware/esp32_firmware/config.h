@@ -16,13 +16,13 @@ const uint8_t PIN_L_A = 32;  // Левое колесо, канал А
 const uint8_t PIN_L_B = 33;  // Левое колесо, канал В
 
 // Коэффициенты по умолчанию для регуляторов
-float KP_R = 1.0;
-float KI_R = 0.0;
-float KD_R = 0.005;
+float KP_R = 0.7;
+float KI_R = 1.2;
+float KD_R = 0.02;
 
-float KP_L = 1.0; 
-float KI_L = 0.0;
-float KD_L = 0.005;
+float KP_L = 0.7; 
+float KI_L = 1.2;
+float KD_L = 0.02;
 
 // Частота дискретизации для ПИДов
 float DT = 100;

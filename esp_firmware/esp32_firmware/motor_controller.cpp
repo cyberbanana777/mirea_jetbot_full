@@ -8,15 +8,17 @@ MotorController::MotorController(float wheelBase, float maxWheelSpeed, float dt,
                                  bool invertLeft, bool invertRight)
   : _pwm(0x60)  // адрес PCA9685 по умолчанию
     ,
-    _pidL(kpL, kiL, kdL, dt),
-    _pidR(kpR, kiR, kdR, dt),
+    _pidL(I_SATURATE),
+    _pidR(I_SATURATE),
     _wheelBase(wheelBase),
     _maxWheelSpeed(maxWheelSpeed),
     _dt(dt),
+    _kpL(kpL), _kiL(kiL), _kdL(kdL),
+    _kpR(kpR), _kiR(kiR), _kdR(kdR),
     _targetLeft(0.0f), _targetRight(0.0f),
     _outputLeft(0.0f), _outputRight(0.0f),
     _leftChannel(leftChannel), _rightChannel(rightChannel),
-    _invertLeft(invertLeft), _invertRight(invertRight), _deathLine(0.05f)
+    _invertLeft(invertLeft), _invertRight(invertRight), _deathLine(0.25f)
 
 {}
 
@@ -26,11 +28,30 @@ bool MotorController::begin() {
   _pwm.setPWMFreq(1000);
   delay(10);
 
-  _pidL.setLimits(-1.0, 1.0);
-  _pidR.setLimits(-1.0, 1.0);
+  _pidL.setKp(_kpL);
+  _pidL.setKi(_kiL);
+  _pidL.setKd(_kdL);
+  _pidL.setDt(_dt);
+  _pidL.outMax = 1.0;
+  _pidL.outMin = -1.0;
+
+  _pidR.setKp(_kpR);
+  _pidR.setKi(_kiR);
+  _pidR.setKd(_kdR);
+  _pidR.setDt(_dt);
+  _pidR.outMax = 1.0;
+  _pidR.outMin = -1.0;
+
   return true;
 }
 
+bool MotorController::reinitializePWM() {
+    _pwm.reset();
+    _pwm.setPWMFreq(1000);
+    delay(1);
+    // После сброса PCA9685 все каналы выключены, так что безопасно
+    return true;
+}
 void MotorController::setTargetVelocity(float linear, float angular) {
   // Дифференциальный привод
   float rawLeft = linear - angular * _wheelBase / 2.0f;   // м/с
@@ -71,11 +92,9 @@ void MotorController::update(float currentLeftSpeed, float currentRightSpeed) {
   // ПИД получает сглаженные значения
   _filteredLeft = _filterLeft.getAverage();
   _filteredRight = _filterRight.getAverage();
-  _pidL.input = _filteredLeft;   // м/с
-  _pidR.input = _filteredRight;  // м/с
 
-  _outputLeft = _pidL.getResultNow();
-  _outputRight = _pidR.getResultNow();
+  _outputLeft = _pidL.compute(_filteredLeft); // м/с
+  _outputRight = _pidR.compute(_filteredRight); // м/с
 
   _motorWrite(_leftChannel, _outputLeft);
   _motorWrite(_rightChannel, _outputRight);
@@ -84,12 +103,14 @@ void MotorController::update(float currentLeftSpeed, float currentRightSpeed) {
 
 void MotorController::setPID(float kpL, float kiL, float kdL,
                              float kpR, float kiR, float kdR) {
-  _pidL.Kp = kpL;
-  _pidL.Ki = kiL;
-  _pidL.Kd = kdL;
-  _pidR.Kp = kpR;
-  _pidR.Ki = kiR;
-  _pidR.Kd = kdR;
+  _pidL.setKp(kpL);
+  _pidL.setKi(kiL);
+  _pidL.setKd(kdL);
+
+  _pidR.setKp(kpR);
+  _pidR.setKi(kiR);
+  _pidR.setKd(kdR);
+
 }
 
 float MotorController::_mapFloat(float value, float fromLow, float fromHigh,

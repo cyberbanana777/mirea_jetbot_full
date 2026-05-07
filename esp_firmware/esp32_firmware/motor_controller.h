@@ -4,9 +4,7 @@
 
 #include <Arduino.h>
 #include <Adafruit_PWMServoDriver.h>
-#define PID_INTEGRAL_WINDOW 40
-#define PID_OPTIMIZED_I
-#include <GyverPID.h>
+#include <uPID.h>
 #include "filter.h"
 
 class MotorController {
@@ -31,6 +29,8 @@ public:
 
     // Инициализация PCA9685 и установка пределов ПИД
     bool begin();
+
+    bool reinitializePWM();
 
     // Установка целевой скорости робота (линейная, угловая)
     void setTargetVelocity(float linear, float angular);
@@ -62,13 +62,16 @@ public:
 
 private:
     Adafruit_PWMServoDriver _pwm;
-    GyverPID _pidL, _pidR;
+    uPID _pidL, _pidR;
     MovingAverage<5> _filterLeft;
     MovingAverage<5> _filterRight;
 
     float _wheelBase;
     float _maxWheelSpeed;
     float _dt;
+
+    float _kpL, _kiL, _kdL;
+    float _kpR, _kiR, _kdR;
 
     float _targetLeft, _targetRight;
     float _outputLeft, _outputRight;

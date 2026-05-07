@@ -5,30 +5,16 @@
 /**
   @author Alice Zenina and Alexander Grachev RTU MIREA (Russia)
   @date 07.05.2026
-  @version 2.0.0
+  @version 2.0.2
 */
-const char* VERSION = "2.0.0";
+const char* VERSION = "2.0.2";
 /**
   @todo
-=== Требуется, но не срочно ===:
-
-1. Анти‑виндап для интегратора ПИД (п.6)
-  Хотя GyverPID имеет setLimits, явный clamping интегратора при насыщении
-  выхода сделает поведение робота устойчивее при упоре в препятствие.
-
 
 === Было бы неплохо ===:
 
-1. Обработка ошибок I²C в момент работы
-  Добавить флаг истечения связи с INA219 или PCA9685 и попытку
-  переинициализации без перезагрузки.
-
-2. Индикация наличия связи (heartbeat) на дисплее
+1. Индикация наличия связи (heartbeat) на дисплее
   Мигающая точка или значок, показывающий, что команды поступают.
-
-
-3. Перейти на новую библиотеку Gyver
-  Больше возможностей, больше оптимизации.
 */
 
 #include <Arduino.h>
@@ -90,30 +76,118 @@ String wifi_ip = "";
 float bus_voltage, shunt_v, current;
 int pros;
 
+// состояние устройств
+bool inaOk = true;
+bool pwmOk = true;
+bool oledOk = true;
+
+// счётчики ошибок подряд
+uint8_t inaErrors = 0;
+uint8_t pwmErrors = 0;
+uint8_t oledErrors = 0;
+const uint8_t MAX_I2C_ERRORS = 3;  // после скольких ошибок инициализировать заново
+
+unsigned long lastI2CCheck = 0;
+const unsigned long I2C_CHECK_INTERVAL = 500;  // 0.5 секунды
+
+void checkI2CDevices() {
+  // -------- INA219 (0x41) --------
+  bool inaResponds = i2cProbe(0x41);
+  if (inaResponds) {
+    if (!inaOk) {
+      // Устройство вернулось без переинициализации (редко, но бывает)
+      inaOk = true;
+      inaErrors = 0;
+    }
+  } else {
+    inaErrors++;
+    if (inaErrors >= MAX_I2C_ERRORS) {
+      inaOk = false;
+      // Попытка переинициализации
+      if (INA.begin()) {
+        inaOk = true;
+        inaErrors = 0;
+        Serial.println("INA219 reinitialized");
+      } else {
+        Serial.println("INA219 reinit failed");
+        // Оставляем inaOk=false, счётчик сбросим после успеха
+        inaErrors = MAX_I2C_ERRORS;  // не копить бесконечно
+      }
+    }
+  }
+
+  // -------- PCA9685 (0x60) --------
+  bool pwmResponds = i2cProbe(0x60);
+  if (pwmResponds) {
+    if (!pwmOk) {
+      pwmOk = true;
+      pwmErrors = 0;
+    }
+  } else {
+    pwmErrors++;
+    if (pwmErrors >= MAX_I2C_ERRORS) {
+      pwmOk = false;
+      if (controller.reinitializePWM()) {
+        pwmOk = true;
+        pwmErrors = 0;
+        // Восстанавливаем управление моторами
+        controller.setTargetVelocity(0.0, 0.0);
+        // Но update() заново рассчитает ПИД и запишет моторы, что нам и нужно
+        Serial.println("PCA9685 reinitialized");
+      } else {
+        Serial.println("PCA9685 reinit failed");
+        pwmErrors = MAX_I2C_ERRORS;
+      }
+    }
+  }
+
+  // -------- OLED (0x3C) --------
+  bool oledResponds = i2cProbe(0x3C);
+  if (oledResponds) {
+    if (!oledOk) {
+      oledOk = true;
+      oledErrors = 0;
+    }
+  } else {
+    oledErrors++;
+    if (oledErrors >= MAX_I2C_ERRORS) {
+      oledOk = false;
+      if (display.reinitialize()) {
+        oledOk = true;
+        oledErrors = 0;
+        Serial.println("OLED reinitialized");
+      } else {
+        Serial.println("OLED reinit failed");
+        oledErrors = MAX_I2C_ERRORS;
+      }
+    }
+  }
+}
+
 void parseJetsonMessage(const char* fullMessage) {
-    if (!fullMessage || fullMessage[0] != '$') return;
-    // Копируем во временный буфер, чтобы не портить оригинал (если нужно)
-    char buf[128];
-    strncpy(buf, fullMessage, 127);
-    buf[127] = '\0';
+  if (!fullMessage || fullMessage[0] != '$') return;
+  // Копируем во временный буфер, чтобы не портить оригинал (если нужно)
+  char buf[128];
+  strncpy(buf, fullMessage, 127);
+  buf[127] = '\0';
 
-    // Удаляем '$' и '#'
-    char* start = buf + 1;
-    char* end = strchr(start, '#');
-    if (end) *end = '\0';
+  // Удаляем '$' и '#'
+  char* start = buf + 1;
+  char* end = strchr(start, '#');
+  if (end) *end = '\0';
 
-    char* parts[4];
-    int count = 0;
-    char* token = strtok(start, ";");
-    while (token && count < 4) {
-        parts[count++] = token;
-        token = strtok(nullptr, ";");
-    }
-    if (count >= 4) {
-        wifi_ssid = parts[1];
-        wifi_password = parts[2];
-        wifi_ip = parts[3];
-    }
+  char* parts[4];
+  int count = 0;
+  char* token = strtok(start, ";");
+  while (token && count < 4) {
+    parts[count++] = token;
+    token = strtok(nullptr, ";");
+  }
+  if (count >= 4) {
+    wifi_ssid = parts[1];
+    wifi_password = parts[2];
+    wifi_ip = parts[3];
+  }
 }
 
 /**
@@ -149,6 +223,7 @@ void setup() {
   error_manager.begin(ERROR_LED_PIN);
 
   error_manager.check_exec(Wire.begin(), "Error! Failed to init I2C bus.");
+  Wire.setTimeOut(50);  // 50 мс таймаут на транзакцию
 
   error_manager.soft_check_exec(i2cProbe(0x3C), "Warning! OLED-display is unaviable through I2C bus");
   error_manager.soft_check_exec(i2cProbe(0x41), "Warning! INA219 sensor is unaviable through I2C bus");
@@ -279,7 +354,7 @@ void loop() {
   }
 
 
-  if (millis() - update_timer >= update_voltage_timer_timeout) {
+  if ((millis() - update_timer >= update_voltage_timer_timeout) && inaOk) {
     update_timer = millis();
     // Чтение напряжения и тока
     bus_voltage = INA.getBusVoltage();
@@ -287,7 +362,14 @@ void loop() {
     pros = (bus_voltage - min_voltage) / (max_voltage - min_voltage) * 100;
     current = shunt_v / 0.1 / 1000;
   }
+  // Мониторинг устройств I2C (не чаще 2 секунд)
+  if (millis() - lastI2CCheck >= I2C_CHECK_INTERVAL) {
+    lastI2CCheck = millis();
+    checkI2CDevices();
+  }
 
   // Обновление дисплея (само проверяет интервал)
-  display.update(wifi_ssid, wifi_ip, wifi_password, bus_voltage, current, pros);
+  if (oledOk) {
+    display.update(wifi_ssid, wifi_ip, wifi_password, bus_voltage, current, pros);
+  }
 }
