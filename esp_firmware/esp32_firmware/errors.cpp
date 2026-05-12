@@ -8,12 +8,16 @@ void ErrorManager::begin(uint8_t LedPin){
 }
 
 void ErrorManager::raise_error(String error_text){
+  uint64_t start_timer_error = millis();
   while(true){
     digitalWrite(_LedPin, HIGH);
     delay(500);
     digitalWrite(_LedPin, LOW);
     delay(500);
     Serial.println(error_text);
+    if (millis() - start_timer_error > 10000){
+      ESP.restart();
+    }
   }
 }
 

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+sudo apt update
+
 sudo apt install \
     python3-pip \
     ros-$ROS_DISTRO-slam-toolbox \
@@ -11,7 +13,7 @@ sudo apt install \
     ros-$ROS_DISTRO-robot-state-publisher \
     ros-$ROS_DISTRO-joint-state-publisher \
     ros-$ROS_DISTRO-gazebo-* \
-    ros-$ROS-DISTRO-teleop-twist-keyboard
+    ros-$ROS_DISTRO-teleop-twist-keyboard
 
 pip install \
     pyserial==3.5 \

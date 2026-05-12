@@ -77,7 +77,7 @@ bool oledOk = true;
 uint8_t inaErrors = 0;
 uint8_t pwmErrors = 0;
 uint8_t oledErrors = 0;
-const uint8_t MAX_I2C_ERRORS = 3;  // после скольких ошибок инициализировать заново
+const uint8_t MAX_I2C_ERRORS = 0;  // после скольких ошибок инициализировать заново
 
 unsigned long lastI2CCheck = 0;
 const unsigned long I2C_CHECK_INTERVAL = 500;  // 0.5 секунды
