@@ -1,7 +1,7 @@
 /amcl:
   ros__parameters:
     # 1.1. Фреймы координат
-    base_frame_id: base_footprint
+    base_frame_id: base_link
     odom_frame_id: odom
     global_frame_id: map
     tf_broadcast: true

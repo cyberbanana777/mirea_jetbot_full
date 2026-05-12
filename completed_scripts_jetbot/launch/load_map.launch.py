@@ -16,18 +16,18 @@ from launch.conditions import IfCondition
 
 def launch_setup(context, *args, **kwargs):
 
-    acml_config_1_condition = PythonExpression([
+    amcl_config_1_condition = PythonExpression([
         '"', LaunchConfiguration('config_choice'), '" == "1"'
     ])    
-    acml_config_2_condition = PythonExpression([
+    amcl_config_2_condition = PythonExpression([
         '"', LaunchConfiguration('config_choice'), '" == "2"'
     ])
 
 
     path_to_pkg = get_package_share_directory('completed_scripts_jetbot')
 
-    acml_config_yaml_real = os.path.join(path_to_pkg, 'config', 'amcl_params_real.yaml')
-    acml_config_yaml_sim = os.path.join(path_to_pkg, 'config', 'amcl_params_sim.yaml')
+    amcl_config_yaml_real = os.path.join(path_to_pkg, 'config', 'amcl_params_real.yaml')
+    amcl_config_yaml_sim = os.path.join(path_to_pkg, 'config', 'amcl_params_sim.yaml')
     map_file = os.path.join(path_to_pkg, 'maps', 'map.yaml')
     # map_file = os.path.join(path_to_pkg, 'maps', 'G210_with_boxes_map.yaml')
 
@@ -36,8 +36,8 @@ def launch_setup(context, *args, **kwargs):
         executable='amcl',
         name='amcl',
         output='screen',
-        parameters=[acml_config_yaml_real],
-        condition=IfCondition(acml_config_1_condition),
+        parameters=[amcl_config_yaml_real],
+        condition=IfCondition(amcl_config_1_condition),
     )
     
     acml_node_sim = Node(
@@ -45,8 +45,8 @@ def launch_setup(context, *args, **kwargs):
         executable='amcl',
         name='amcl',
         output='screen',
-        parameters=[acml_config_yaml_sim],
-        condition=IfCondition(acml_config_2_condition),
+        parameters=[amcl_config_yaml_sim],
+        condition=IfCondition(amcl_config_2_condition),
     )
 
     lifecycle_manager = Node(
@@ -75,7 +75,7 @@ def launch_setup(context, *args, **kwargs):
                 output='screen',
                 parameters=[{'use_sim_time': False},
                             {'yaml_filename': map_file}],
-                condition=IfCondition(acml_config_1_condition),
+                condition=IfCondition(amcl_config_1_condition),
             ),
         ]
     )
@@ -90,7 +90,7 @@ def launch_setup(context, *args, **kwargs):
                 output='screen',
                 parameters=[{'use_sim_time': True},
                             {'yaml_filename': map_file}],
-                condition=IfCondition(acml_config_2_condition),
+                condition=IfCondition(amcl_config_2_condition),
                 
             ),
         ]
