@@ -34,7 +34,7 @@ def generate_launch_description():
         description='конфиг rviz: visualization - визуализация, navigation - навигация по карте' \
         'и ' \
         'ID полигона: 1 - Г210, 2 - Г210 с препятствиями, 3 - складской.',
-        choices=['visualization_1', 'visualization_2', 'navigation_', 'navigation_2']
+        choices=['visualization_1', 'visualization_2', 'navigation_1', 'navigation_2']
     )
     
     # 2. Возвращаем описание запуска
