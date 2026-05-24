@@ -1,8 +1,8 @@
 .vscode
+.refact
 __pycache__
 without_device.txt
 with_device.txt
-jetbot_telemetria.service
 
 simple_regulators_configurator_pkg
 development
