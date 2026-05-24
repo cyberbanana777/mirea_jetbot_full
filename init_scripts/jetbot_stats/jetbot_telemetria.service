@@ -1,0 +1,7 @@
+[Service]
+ExecStart=/home/banana-killer/mirea_jetbots/jetbot_full_ws/src/init_scripts/jetbot_stats/jetbot_stats.py
+Restart=always
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal

@@ -27,21 +27,24 @@ def generate_launch_description():
         choices=['ideal', 'real']
     )
     
-    world_arg = DeclareLaunchArgument(
-        'world_id',
+    preset_arg = DeclareLaunchArgument(
+        'preset_id',
 
-        default_value='visualization_2',
-        description='конфиг rviz: visualization - визуализация, navigation - навигация по карте' \
+        default_value='sensors_2',
+        description='конфиг rviz: sensors - все датчики робота, mapping - картографирование, navigation - навигация по карте' \
         'и ' \
         'ID полигона: 1 - Г210, 2 - Г210 с препятствиями, 3 - складской.',
-        choices=['visualization_1', 'visualization_2', 'navigation_1', 'navigation_2']
+        choices=['sensors_1', 'sensors_2',
+                 'mapping_1', 'mapping_2',
+                 'navigation_1', 'navigation_2',
+                 'simple_labirint_3']
     )
     
     # 2. Возвращаем описание запуска
     return LaunchDescription([
         launch_rviz_arg,
         model_use_arg,
-        world_arg,
+        preset_arg,
         # Используем OpaqueFunction для отложенного выполнения
         OpaqueFunction(function=launch_setup)
     ])
@@ -52,34 +55,47 @@ def launch_setup(context, *args, **kwargs):
     launch_actions = []
     
     # 3. Получаем ЗНАЧЕНИЕ аргумента (как строку)
-    world_id = context.launch_configurations.get('world_id', 'visualization_2')
+    preset_id = context.launch_configurations.get('preset_id', 'sensors_2')
     launch_rviz = context.launch_configurations.get('launch_rviz', 'true')
     model_use = context.launch_configurations.get('model_use', 'ideal')
 
     
     # 4. Маппинг миров и их конфигов
     world_configs = {
-        'visualization_1': {
+        'sensors_1': {
             'world_file': 'G210.world',
-            'rviz_config': 'visualization.rviz',
+            'rviz_config': 'sensors.rviz',
             'height_spawn': '1.5',
             'x_spawn': '0.0',
         },
-        'visualization_2': {
+        'sensors_2': {
             'world_file': 'G210_with_boxes.world',
-            'rviz_config': 'visualization.rviz',
+            'rviz_config': 'sensors.rviz',
+            'height_spawn': '1.5',
+            'x_spawn': '-1.0',
+        },
+        
+        'mapping_1': {
+            'world_file': 'G210.world',
+            'rviz_config': 'mapping.rviz',
+            'height_spawn': '1.5',
+            'x_spawn': '0.0',
+        },
+        'mapping_2': {
+            'world_file': 'G210_with_boxes.world',
+            'rviz_config': 'mapping.rviz',
             'height_spawn': '1.5',
             'x_spawn': '-1.0',
         },
         'navigation_1': {
             'world_file': 'G210.world',
-            'rviz_config': 'load_map.rviz',
+            'rviz_config': 'navigation.rviz',
             'height_spawn': '1.5',
             'x_spawn': '0.0',
         },
         'navigation_2': {
             'world_file': 'G210_with_boxes.world',
-            'rviz_config': 'load_map.rviz',
+            'rviz_config': 'navigation.rviz',
             'height_spawn': '1.5',
             'x_spawn': '-1.0',
         },
@@ -93,7 +109,7 @@ def launch_setup(context, *args, **kwargs):
     }
     
     # 5. Выбираем конфигурацию на основе world_id
-    selected_config = world_configs.get(world_id, world_configs['visualization_2'])
+    selected_config = world_configs.get(preset_id, world_configs['sensors_2'])
     
     # 6. Получаем пути к файлам пакета
     pkg_path = get_package_share_directory('jetbot_mirea_description')
