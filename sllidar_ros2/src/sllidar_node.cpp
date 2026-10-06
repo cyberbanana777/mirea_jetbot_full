@@ -39,6 +39,7 @@
 #include "math.h"
 
 #include <signal.h>
+#include <chrono>
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
@@ -78,6 +79,9 @@ class SLlidarNode : public rclcpp::Node
         this->declare_parameter<bool>("angle_compensate", false);
         this->declare_parameter<std::string>("scan_mode",std::string());
         this->declare_parameter<float>("scan_frequency",10);
+        this->declare_parameter<double>("motor_ramp_time", 1.5);
+        this->declare_parameter<int>("motor_ramp_steps", 30);
+        this->declare_parameter<double>("motor_ramp_min", 0.15);
         
         this->get_parameter_or<std::string>("channel_type", channel_type, "serial");
         this->get_parameter_or<std::string>("tcp_ip", tcp_ip, "192.168.0.7"); 
@@ -90,6 +94,9 @@ class SLlidarNode : public rclcpp::Node
         this->get_parameter_or<bool>("inverted", inverted, false);
         this->get_parameter_or<bool>("angle_compensate", angle_compensate, false);
         this->get_parameter_or<std::string>("scan_mode", scan_mode, std::string());
+        this->get_parameter_or<double>("motor_ramp_time", motor_ramp_time, 1.5);
+        this->get_parameter_or<int>("motor_ramp_steps", motor_ramp_steps, 30);
+        this->get_parameter_or<double>("motor_ramp_min", motor_ramp_min, 0.15);
         if(channel_type == "udp")
             this->get_parameter_or<float>("scan_frequency", scan_frequency, 20.0);
         else
@@ -191,6 +198,36 @@ class SLlidarNode : public rclcpp::Node
         }
 
         return true;
+    }
+
+    // Soft start of the motor for lidars with PWM motor control (A2/A3):
+    // PWM grows linearly from motor_ramp_min*desired to desired over motor_ramp_time seconds
+    // to limit the inrush current on the USB port.
+    void soft_start_motor()
+    {
+        if (motor_ramp_time <= 0.0 || motor_ramp_steps < 1) {
+            drv->setMotorSpeed();
+            return;
+        }
+
+        LidarMotorInfo mi;
+        sl_result res = drv->getMotorInfo(mi);
+        if (SL_IS_FAIL(res) || mi.desired_speed == 0) {
+            RCLCPP_WARN(this->get_logger(), "Cannot read motor info (%08x), starting motor without ramp", res);
+            drv->setMotorSpeed();
+            return;
+        }
+
+        const double target = mi.desired_speed;
+        const auto step_dt = std::chrono::duration<double>(motor_ramp_time / motor_ramp_steps);
+        RCLCPP_INFO(this->get_logger(), "Motor soft start: PWM -> %d over %.1f s", (int)target, motor_ramp_time);
+
+        for (int i = 0; i <= motor_ramp_steps && rclcpp::ok() && !need_exit; ++i) {
+            double k = motor_ramp_min + (1.0 - motor_ramp_min) * (double)i / motor_ramp_steps;
+            drv->setMotorSpeed((sl_u16)(target * k));
+            rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(step_dt));
+        }
+        drv->setMotorSpeed((sl_u16)target);
     }
 
     static float getAngle(const sl_lidar_response_measurement_node_hq_t& node)
@@ -305,7 +342,7 @@ public:
         start_motor_service = this->create_service<std_srvs::srv::Empty>("start_motor", 
                                 std::bind(&SLlidarNode::start_motor,this,std::placeholders::_1,std::placeholders::_2));
 
-        drv->setMotorSpeed();
+        soft_start_motor();
 
         LidarScanMode current_scan_mode;
         if (scan_mode.empty()) {
@@ -460,6 +497,9 @@ public:
     size_t angle_compensate_multiple = 1;//it stand of angle compensate at per 1 degree
     std::string scan_mode;
     float scan_frequency;
+    double motor_ramp_time = 1.5;
+    int motor_ramp_steps = 30;
+    double motor_ramp_min = 0.15;
 
     ILidarDriver * drv;    
 };

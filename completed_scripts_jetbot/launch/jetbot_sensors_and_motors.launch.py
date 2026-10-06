@@ -42,6 +42,9 @@ def launch_setup(context, *args, **kwargs):
         'frame_id': "lidar_link",
         'angle_compensate': LaunchConfiguration('angle_compensate'),
         'scan_mode': LaunchConfiguration('scan_mode'),
+        'motor_ramp_time': LaunchConfiguration('motor_ramp_time'),
+        'motor_ramp_steps': LaunchConfiguration('motor_ramp_steps'),
+        'motor_ramp_min': LaunchConfiguration('motor_ramp_min'),
     }
 
     # ========================================================================
@@ -173,7 +176,20 @@ def generate_launch_description():
         choices=['Standard', 'Express', 'Boost'],
     )
 
+    DeclareLaunchArgument(
+        'motor_ramp_time',
+        default_value=1.5,
+        description='Acceleration time, s (0 disables acceleration)'),
 
+    DeclareLaunchArgument(
+        'motor_ramp_steps',
+        default_value=30,
+        description='Number of stages'),
+    
+    DeclareLaunchArgument(
+        'motor_ramp_min',
+        default_value=0.15,
+        description='Start value of PWM'),
     
     return LaunchDescription([
         lidar_mode_arg,
