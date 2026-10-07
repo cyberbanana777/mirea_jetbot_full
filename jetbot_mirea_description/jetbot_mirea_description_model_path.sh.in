@@ -3,4 +3,4 @@
 export GAZEBO_MODEL_PATH="@CMAKE_INSTALL_PREFIX@/share/@PROJECT_NAME@/models:$GAZEBO_MODEL_PATH"
 export IGN_GAZEBO_RESOURCE_PATH="@CMAKE_INSTALL_PREFIX@/share/@PROJECT_NAME@/models:$IGN_GAZEBO_RESOURCE_PATH"
 
-source /usr/share/gazebo/setup.sh
+if [ -f /usr/share/gazebo/setup.sh ]; then . /usr/share/gazebo/setup.sh; fi
