@@ -42,24 +42,27 @@ def launch_setup(context, *args, **kwargs):
         'frame_id': "lidar_link",
         'angle_compensate': LaunchConfiguration('angle_compensate'),
         'scan_mode': LaunchConfiguration('scan_mode'),
-        'motor_ramp_time': LaunchConfiguration('motor_ramp_time'),
-        'motor_ramp_steps': LaunchConfiguration('motor_ramp_steps'),
-        'motor_ramp_min': LaunchConfiguration('motor_ramp_min'),
     }
 
     # ========================================================================
     # Get paths to directories with launch-files and configs
+    # use_cpp:=True  - C++ nodes (serial_bridge_cpp, lidar_filter_cpp)
+    # use_cpp:=False - old Python nodes (serial_bridge_package, lidar_filter)
+    use_cpp = LaunchConfiguration('use_cpp').perform(context) == 'True'
+
     pkg1_launch_dir = os.path.join(
-        get_package_share_directory('serial_bridge_package'),
+        get_package_share_directory(
+            'serial_bridge_cpp' if use_cpp else 'serial_bridge_package'),
         'launch'
     )
     pkg2_launch_dir = os.path.join(
         get_package_share_directory('sllidar_ros2'),
         'launch'
     )
-    
+
     pkg3_launch_dir = os.path.join(
-        get_package_share_directory('lidar_filter'),
+        get_package_share_directory(
+            'lidar_filter_cpp' if use_cpp else 'lidar_filter'),
         'launch'
     )
 
@@ -176,22 +179,18 @@ def generate_launch_description():
         choices=['Standard', 'Express', 'Boost'],
     )
 
-    motor_ramp_time_arg = DeclareLaunchArgument(
-        'motor_ramp_time',
-        default_value='1.5',
-        description='Acceleration time, s (0 disables acceleration)')
 
-    motor_ramp_steps_arg = DeclareLaunchArgument(
-        'motor_ramp_steps',
-        default_value='30',
-        description='Number of stages')
     
-    motor_ramp_min_arg = DeclareLaunchArgument(
-        'motor_ramp_min',
-        default_value='0.15',
-        description='Start value of PWM')
-    
+    use_cpp_arg = DeclareLaunchArgument(
+        'use_cpp',
+        default_value='True',
+        description='Use C++ low-level nodes (serial bridge, lidar filter) '
+                    'instead of the Python ones',
+        choices=['True', 'False']
+    )
+
     return LaunchDescription([
+        use_cpp_arg,
         lidar_mode_arg,
         camera_mode_arg,
         motors_mode_arg,
@@ -199,9 +198,6 @@ def generate_launch_description():
         lidar_serial_port_arg,
         angle_compensate_arg,
         scan_mode_arg,
-        motor_ramp_time_arg,
-        motor_ramp_steps_arg,
-        motor_ramp_min_arg,
         
         OpaqueFunction(function=launch_setup),
     ])

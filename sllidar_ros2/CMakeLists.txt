@@ -39,7 +39,9 @@ find_package(std_srvs REQUIRED)
 ################################################################################
 # Build
 ################################################################################
-include_directories(
+# SDK headers are third-party code (Slamtec): include them as SYSTEM so that
+# -Wpedantic does not warn about their zero-size arrays (GNU extension).
+include_directories(SYSTEM
   ${SLLIDAR_SDK_PATH}/include
   ${SLLIDAR_SDK_PATH}/src
   ${Boost_INCLUDE_DIRS}

@@ -26,6 +26,35 @@ from std_msgs.msg import String
 import serial
 import threading
 
+# Protection against garbage on the line: an unfinished frame longer than
+# this is dropped (real ESP32 frames are < 100 chars).
+MAX_FRAME_LEN = 256
+
+
+def extract_frames(buffer):
+    """
+    Extract complete '$...#' frames from the text buffer.
+
+    Returns (frames, rest), where rest is the unfinished tail to keep.
+    Like the ESP32 receiver, a new '$' restarts the frame, so a broken
+    frame without '#' does not swallow the next valid one.
+    """
+    frames = []
+    while True:
+        start = buffer.find('$')
+        if start == -1:
+            return frames, ''
+        end = buffer.find('#', start + 1)
+        if end == -1:
+            rest = buffer[buffer.rfind('$'):]
+            if len(rest) > MAX_FRAME_LEN:
+                rest = ''
+            return frames, rest
+        # Restart from the last '$' before '#'
+        start = buffer.rfind('$', start, end)
+        frames.append(buffer[start:end + 1])
+        buffer = buffer[end + 1:]
+
 
 class SerialBridgeNode(Node):
     """
@@ -97,72 +126,33 @@ class SerialBridgeNode(Node):
     def read_from_serial(self):
         """
         Worker thread: reads data from serial port and publishes to ROS topic.
+
+        The read is BLOCKING: ser.read() sleeps inside the OS until at least
+        one byte arrives or the port timeout expires. The previous version
+        polled ser.in_waiting in a loop without any wait, which kept one CPU
+        core at 100% and held the GIL, slowing down rclpy callbacks.
         """
-        # Buffer for accumulating data between reads
-        if not hasattr(self, 'serial_buffer'):
-            self.serial_buffer = ''
-        
+        buffer = ''
+
         while self.running and rclpy.ok():
             try:
-                # Read all available data or wait for timeout
-                if self.ser.in_waiting > 0:
-                    data_bytes = self.ser.read(self.ser.in_waiting)
-
-                    try:
-                        data_str = data_bytes.decode('utf-8', errors='ignore')
-                        self.serial_buffer += data_str
-                        
-                        # Process all complete messages in buffer
-                        while True:
-                            # Find message start
-                            start_index = self.serial_buffer.find('$')
-                            if start_index == -1:
-                                # No message start found, clear buffer
-                                self.serial_buffer = ''
-                                break
-                            
-                            # Find message end after start
-                            end_index = self.serial_buffer.find('#', start_index + 1)
-                            if end_index == -1:
-                                # Message not complete, keep everything after last $ in buffer
-                                self.serial_buffer = self.serial_buffer[start_index:]
-                                break
-                            
-                            # Extract complete message
-                            full_message = self.serial_buffer[start_index:end_index + 1]
-                            
-                            # Validate message format (must start with $ and end with #)
-                            if full_message.startswith('$') and full_message.endswith('#'):
-                                message_text = full_message.strip()
-                                
-                                # Publish extracted text
-                                ros_msg = String()
-                                ros_msg.data = message_text
-                                self.pub_to_ros.publish(ros_msg)
-                                self.get_logger().debug(
-                                    f"Received complete message: {full_message} -> {message_text}"
-                                )
-                            else:
-                                self.get_logger().warning(
-                                    f"Invalid message format: {full_message}"
-                                )
-                            
-                            # Remove processed message from buffer
-                            remaining_data = self.serial_buffer[end_index + 1:]
-                            self.serial_buffer = remaining_data
-                            
-                            # Exit loop if no data left in buffer
-                            if not self.serial_buffer:
-                                break
-
-                    except UnicodeDecodeError:
-                        self.get_logger().warning(
-                            "Failed to decode data as UTF-8"
-                            )
-
+                # Wait for at least 1 byte (or timeout), then take everything
+                # that is already in the driver buffer.
+                data_bytes = self.ser.read(max(1, self.ser.in_waiting))
             except serial.SerialException as e:
                 self.get_logger().error(f"Error reading from serial port: {e}")
                 break
+
+            if not data_bytes:
+                continue  # timeout, no data - just wait again
+
+            buffer += data_bytes.decode('utf-8', errors='ignore')
+            frames, buffer = extract_frames(buffer)
+
+            for frame in frames:
+                ros_msg = String()
+                ros_msg.data = frame
+                self.pub_to_ros.publish(ros_msg)
 
     def destroy_node(self):
         """Cleanup when node is stopped."""

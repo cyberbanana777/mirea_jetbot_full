@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>lidar_filter</name>
-  <version>1.0.0</version>
+  <version>1.1.0</version>
   <description>Simple filter for lidar data type of topic '/scan' (sensor_msgs/msg/LaserScan)</description>
   <maintainer email="sashagrachev2005@gmail.com">banana-killer</maintainer>
   <license>MIT</license>
