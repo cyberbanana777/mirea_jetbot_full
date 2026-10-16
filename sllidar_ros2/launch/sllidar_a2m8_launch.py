@@ -18,6 +18,9 @@ def generate_launch_description():
     inverted = LaunchConfiguration('inverted', default='false')
     angle_compensate = LaunchConfiguration('angle_compensate', default='true')
     scan_mode = LaunchConfiguration('scan_mode', default='Sensitivity')
+    motor_ramp_time = LaunchConfiguration('motor_ramp_time', default='1.5')
+    motor_ramp_steps = LaunchConfiguration('motor_ramp_steps', default='30')
+    motor_ramp_min = LaunchConfiguration('motor_ramp_min', default='0.15')
     
     return LaunchDescription([
 
@@ -50,11 +53,27 @@ def generate_launch_description():
             'angle_compensate',
             default_value=angle_compensate,
             description='Specifying whether or not to enable angle_compensate of scan data'),
+        
         DeclareLaunchArgument(
             'scan_mode',
             default_value=scan_mode,
             description='Specifying scan mode of lidar'),
+        
+        DeclareLaunchArgument(
+            'motor_ramp_time',
+            default_value=motor_ramp_time,
+            description='Acceleration time, s (0 disables acceleration)'),
 
+        DeclareLaunchArgument(
+            'motor_ramp_steps',
+            default_value=motor_ramp_steps,
+            description='Number of stages'),
+        
+        DeclareLaunchArgument(
+            'motor_ramp_min',
+            default_value=motor_ramp_min,
+            description='Start value of PWM'),
+        
 
         Node(
             package='sllidar_ros2',
@@ -65,7 +84,11 @@ def generate_launch_description():
                          'serial_baudrate': serial_baudrate, 
                          'frame_id': frame_id,
                          'inverted': inverted, 
-                         'angle_compensate': angle_compensate}],
+                         'angle_compensate': angle_compensate,
+                         'motor_ramp_time': motor_ramp_time,
+                         'motor_ramp_steps': motor_ramp_steps,
+                         'motor_ramp_min': motor_ramp_min,
+                         }],
             output='screen'),
     ])
 
