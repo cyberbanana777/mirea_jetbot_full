@@ -16,6 +16,8 @@ volatile int Encoders::_PIN_R_A;
 volatile int Encoders::_PIN_R_B;
 volatile int Encoders::_PIN_L_A;
 volatile int Encoders::_PIN_L_B;
+// Защищает счётчики: чтение+обнуление в loop() не должно разрываться прерыванием
+portMUX_TYPE Encoders::_mux = portMUX_INITIALIZER_UNLOCKED;
 
 
 bool Encoders::begin(int PIN_R_A, int PIN_R_B, int PIN_L_A, int PIN_L_B) {
@@ -34,27 +36,36 @@ bool Encoders::begin(int PIN_R_A, int PIN_R_B, int PIN_L_A, int PIN_L_B) {
   return true;
 }
 
+// Чтение и обнуление выполняются атомарно: иначе тик, пришедший из
+// прерывания между чтением и обнулением, терялся бы.
 int32_t Encoders::getLeftAndReset() {
+  portENTER_CRITICAL(&_mux);
   int32_t val = _leftPos;
   _leftPos = 0;
+  portEXIT_CRITICAL(&_mux);
   return val;
 }
 
 int32_t Encoders::getRightAndReset() {
+  portENTER_CRITICAL(&_mux);
   int32_t val = _rightPos;
   _rightPos = 0;
+  portEXIT_CRITICAL(&_mux);
   return val;
 }
 
 void Encoders::reset() {
+  portENTER_CRITICAL(&_mux);
   _leftPos = 0;
   _rightPos = 0;
+  portEXIT_CRITICAL(&_mux);
 }
 
 // обработчики прерываний (код из вашего файла, адаптированный)
 void IRAM_ATTR Encoders::_readR_A() {
   _ReadPIN_R_A_A = digitalRead(_PIN_R_A);
   _ReadPIN_R_B_A = digitalRead(_PIN_R_B);
+  portENTER_CRITICAL_ISR(&_mux);
 
   switch (_ReadPIN_R_A_A) {
     case 0:
@@ -67,11 +78,13 @@ void IRAM_ATTR Encoders::_readR_A() {
       if (_ReadPIN_R_B_A == 0) {_rightPos += 1; break;}
       break;
   }
+  portEXIT_CRITICAL_ISR(&_mux);
 }
 
 void IRAM_ATTR Encoders::_readR_B() {
   _ReadPIN_R_A_B = digitalRead(_PIN_R_A);
   _ReadPIN_R_B_B = digitalRead(_PIN_R_B);
+  portENTER_CRITICAL_ISR(&_mux);
 
   switch (_ReadPIN_R_B_B) {
     case 0:
@@ -84,12 +97,14 @@ void IRAM_ATTR Encoders::_readR_B() {
       if (_ReadPIN_R_A_B == 0) {_rightPos -= 1; break;}
       break;
   }
+  portEXIT_CRITICAL_ISR(&_mux);
 }
 
 
 void IRAM_ATTR Encoders::_readL_A() {
   _ReadPIN_L_A_A = digitalRead(_PIN_L_A);
   _ReadPIN_L_B_A = digitalRead(_PIN_L_B);
+  portENTER_CRITICAL_ISR(&_mux);
 
   switch (_ReadPIN_L_A_A) {
     case 0:
@@ -102,11 +117,13 @@ void IRAM_ATTR Encoders::_readL_A() {
       if (_ReadPIN_L_B_A == 0) {_leftPos += 1; break;}
       break;
   }
+  portEXIT_CRITICAL_ISR(&_mux);
 }
 
 void IRAM_ATTR Encoders::_readL_B() {
   _ReadPIN_L_A_B = digitalRead(_PIN_L_A);
   _ReadPIN_L_B_B = digitalRead(_PIN_L_B);
+  portENTER_CRITICAL_ISR(&_mux);
 
   switch (_ReadPIN_L_B_B) {
     case 0:
@@ -119,5 +136,6 @@ void IRAM_ATTR Encoders::_readL_B() {
       if (_ReadPIN_L_A_B == 0) {_leftPos -= 1; break;}
       break;
   }
+  portEXIT_CRITICAL_ISR(&_mux);
 }
 

@@ -27,6 +27,7 @@ private:
   static volatile int _PIN_R_B;
   static volatile int _PIN_L_A;
   static volatile int _PIN_L_B;
+  static portMUX_TYPE _mux;
 
 
   static void IRAM_ATTR _readR_A();

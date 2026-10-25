@@ -4,10 +4,10 @@
 
 /**
   @author Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
-  @date 23.05.2026
-  @version 2.0.3
+  @date 25.10.2026
+  @version 2.1.0
 */
-const char *VERSION = "2.0.3";
+const char *VERSION = "2.1.0";
 
 #include <Arduino.h>
 #include <math.h>
@@ -28,6 +28,7 @@ const char *VERSION = "2.0.3";
 #include "command_parser.h"
 #include "display_manager.h"
 #include "serial_receiver.h"
+#include "odometry.h"
 
 static const char *WIFI_SSID_FALLBACK = "YOUR_WIFI_SSID";
 static const char *WIFI_PASS_FALLBACK = "YOUR_WIFI_PASSWORD";
@@ -69,14 +70,22 @@ bool i2cProbe(uint8_t address)
 }
 
 // Для таймеров
-unsigned long tmr = 0;
-unsigned long delta = 0;
+unsigned long odom_tmr = 0;   // момент последнего расчёта одометрии, мкс
 unsigned long emergency_timer = 0;
 uint64_t update_timer;
 
-double x_pos_ = 0.0;
-double y_pos_ = 0.0;
-double heading_ = 0.0;
+// Одометрия (50 Гц) и накопители тиков для ПИД (10 Гц)
+DiffDriveOdometry odometry(WHEEL_BASE);
+uint8_t odom_counter = 0;        // сколько периодов одометрии прошло с последнего ПИД
+int32_t pid_left_ticks = 0;      // тики за текущий период ПИД
+int32_t pid_right_ticks = 0;
+unsigned long pid_delta = 0;     // длительность текущего периода ПИД, мкс
+
+// Скорости для отправки на Jetson: обновляются раз в период ПИД
+float linear_vel_ = 0.0;
+float angular_vel_ = 0.0;
+float left_vel_ = 0.0;
+float right_vel_ = 0.0;
 
 // Переменные для хранения принятых данных
 String wifi_ssid = "";
@@ -260,6 +269,18 @@ float convert_ticks_to_freq(long ticks, long timeout_micros, char dir)
   return result;
 }
 
+/**
+ * @brief Путь колеса по числу тиков энкодера, м (вперёд > 0).
+ * Использует convert_ticks_to_freq с периодом 1 с: частота за 1 с = число
+ * оборотов, поэтому константы энкодера и знак колеса задаются в одном месте.
+ */
+float convert_ticks_to_distance(long ticks, char dir)
+{
+  const long one_second_micros = 1000000;
+  float turns = convert_ticks_to_freq(ticks, one_second_micros, dir);
+  return turns * 2 * Pi * WHEEL_RADIUS;
+}
+
 void startArduinoOTA()
 {
   ArduinoOTA.setHostname(ota_hostname.c_str());
@@ -402,6 +423,9 @@ void setup()
   controller.setWheelSpeeds(0.0, 0.0);
 
   emergency_timer = millis();
+  // Отсчёт одометрии и ПИД с конца инициализации, а не с включения питания
+  encoders.reset();
+  odom_tmr = micros();
 }
 
 void loop()
@@ -422,43 +446,54 @@ void loop()
     controller.setWheelSpeeds(0.0, 0.0);
   }
 
-  delta = micros() - tmr;
+  unsigned long now = micros();
+  unsigned long odom_delta = now - odom_tmr;
 
-  if (delta >= timer_timeout)
+  // Одометрия: каждые odom_timer_timeout (20 мс, 50 Гц)
+  if (odom_delta >= odom_timer_timeout)
   {
-    tmr = micros();
+    odom_tmr = now;
 
+    // 1. Тики энкодеров за период одометрии
     int32_t rightTicks = encoders.getRightAndReset();
     int32_t leftTicks = encoders.getLeftAndReset();
 
-    // 2. Преобразуем тики в частоту вращения (об/с)
-    float rightFreq = convert_ticks_to_freq(rightTicks, delta, 'r');
-    float leftFreq = convert_ticks_to_freq(leftTicks, delta, 'l');
+    // 2. Поза по пройденному колёсами пути (м)
+    odometry.update(convert_ticks_to_distance(leftTicks, 'l'),
+                    convert_ticks_to_distance(rightTicks, 'r'));
 
-    // 3. Вычисляем линейные скорости колёс (м/с)
-    float rightLinVel = rightFreq * 2 * Pi * WHEEL_RADIUS;
-    float leftLinVel = leftFreq * 2 * Pi * WHEEL_RADIUS;
+    // 3. Тики копятся для ПИД: регулятор работает раз в ODOM_RATE_DIVIDER
+    //    периодов (100 мс), как и раньше - под этот период подобраны коэффициенты
+    pid_left_ticks += leftTicks;
+    pid_right_ticks += rightTicks;
+    pid_delta += odom_delta;
 
-    // 4. Обновляем ПИД-регуляторы и выдаём сигнал на моторы
-    controller.update(leftLinVel, rightLinVel);
-    rightLinVel = controller.getFilteredRight();
-    leftLinVel = controller.getFilteredLeft();
+    if (++odom_counter >= ODOM_RATE_DIVIDER)
+    {
+      // 3.1. Тики за период ПИД -> частота вращения (об/с) -> скорость колеса (м/с)
+      float rightFreq = convert_ticks_to_freq(pid_right_ticks, pid_delta, 'r');
+      float leftFreq = convert_ticks_to_freq(pid_left_ticks, pid_delta, 'l');
+      float rightLinVel = rightFreq * 2 * Pi * WHEEL_RADIUS;
+      float leftLinVel = leftFreq * 2 * Pi * WHEEL_RADIUS;
 
-    // 5. Одометрия
-    double linearVel = (rightLinVel + leftLinVel) / 2.0;
-    double angularVel = (rightLinVel - leftLinVel) / WHEEL_BASE; // для дифференциального привода
-    double dtSec = timer_timeout / 1e6;                          // период в секундах
-    double deltaHeading = angularVel * dtSec;
-    double deltaX = linearVel * cos(heading_) * dtSec;
-    double deltaY = linearVel * sin(heading_) * dtSec;
+      // 3.2. Обновляем ПИД-регуляторы и выдаём сигнал на моторы
+      controller.update(leftLinVel, rightLinVel);
 
-    x_pos_ += deltaX;
-    y_pos_ += deltaY;
-    heading_ += deltaHeading;
+      // 3.3. Сглаженные скорости для отправки на Jetson
+      right_vel_ = controller.getFilteredRight();
+      left_vel_ = controller.getFilteredLeft();
+      linear_vel_ = (right_vel_ + left_vel_) / 2.0;
+      angular_vel_ = (right_vel_ - left_vel_) / WHEEL_BASE; // для дифференциального привода
 
-    // 6. Публикация данных одометрии
-    odomPublish(x_pos_, y_pos_, heading_, linearVel, angularVel,
-                leftLinVel, rightLinVel);
+      odom_counter = 0;
+      pid_left_ticks = 0;
+      pid_right_ticks = 0;
+      pid_delta = 0;
+    }
+
+    // 4. Публикация одометрии (50 Гц)
+    odomPublish(odometry.x(), odometry.y(), odometry.heading(),
+                linear_vel_, angular_vel_, left_vel_, right_vel_);
   }
 
   // Обработка входного значения

@@ -41,6 +41,7 @@
 #include "tf2_ros/transform_broadcaster.h"
 #endif
 
+#include "serial_bridge_cpp/covariance.hpp"
 #include "serial_bridge_cpp/frame_parser.hpp"
 #include "serial_bridge_cpp/serial_port.hpp"
 
@@ -68,6 +69,15 @@ public:
     publish_raw_ = declare_parameter<bool>("publish_raw_feedback", true);
     reconnect_period_ = std::chrono::duration<double>(
       declare_parameter<double>("reconnect_period", 1.0));
+    // Diagonals of the odometry covariances (placeholders, see covariance.hpp)
+    pose_covariance_ = diagonal_to_covariance(
+      declare_parameter<std::vector<double>>(
+        "pose_covariance_diagonal", default_pose_covariance_diagonal()),
+      "pose_covariance_diagonal");
+    twist_covariance_ = diagonal_to_covariance(
+      declare_parameter<std::vector<double>>(
+        "twist_covariance_diagonal", default_twist_covariance_diagonal()),
+      "twist_covariance_diagonal");
 
     // Topic names are the same as in the Python version
     odom_pub_ = create_publisher<nav_msgs::msg::Odometry>("/odom", 10);
@@ -219,6 +229,8 @@ private:
     odom->pose.pose.orientation.w = qw;
     odom->twist.twist.linear.x = vx;
     odom->twist.twist.angular.z = wz;
+    odom->pose.covariance = pose_covariance_;
+    odom->twist.covariance = twist_covariance_;
     odom_pub_->publish(std::move(odom));
 
     if (tf_broadcaster_) {
@@ -262,6 +274,8 @@ private:
   bool publish_tf_;
   bool publish_raw_;
   std::chrono::duration<double> reconnect_period_;
+  std::array<double, 36> pose_covariance_;
+  std::array<double, 36> twist_covariance_;
 
   // ROS interfaces
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;

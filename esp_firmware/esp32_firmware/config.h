@@ -30,9 +30,14 @@ float DT = 100;
 const double MAX_CONSTRUCTIVE_VELOCITY = 0.5; // м/сек
 
 // === Таймеры ===
+// Период ПИД-регуляторов (мкс). Коэффициенты ПИД подобраны под этот период.
 const unsigned long timer_timeout = DT * 1000; //мкс
-// Для остановки после 5 секунд простоя
-const unsigned int emergency_timer_timeout = 5000;
+// Одометрия считается и отправляется в ODOM_RATE_DIVIDER раз чаще ПИД:
+// 100 мс / 5 = 20 мс (50 Гц). ПИД по-прежнему работает раз в 100 мс.
+const uint8_t ODOM_RATE_DIVIDER = 5;
+const unsigned long odom_timer_timeout = timer_timeout / ODOM_RATE_DIVIDER; //мкс
+// Аварийная остановка, если команды не приходят дольше 1 секунды
+const unsigned int emergency_timer_timeout = 1000;
 const unsigned int update_voltage_timer_timeout = 200;
 
 
