@@ -18,7 +18,7 @@ MotorController::MotorController(float wheelBase, float maxWheelSpeed, float dt,
     _targetLeft(0.0f), _targetRight(0.0f),
     _outputLeft(0.0f), _outputRight(0.0f),
     _leftChannel(leftChannel), _rightChannel(rightChannel),
-    _invertLeft(invertLeft), _invertRight(invertRight), _deathLine(0.25f)
+    _invertLeft(invertLeft), _invertRight(invertRight), _deathLine(0.35f)
 
 {}
 

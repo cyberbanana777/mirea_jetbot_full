@@ -5,19 +5,15 @@
 /**
   @author Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
   @date 25.10.2026
-  @version 2.1.1
+  @version 2.2.0
 */
-const char *VERSION = "2.1.1";
+const char *VERSION = "2.2.0";
 
 #include <Arduino.h>
 #include <math.h>
 #include <Wire.h>
 #include <stdio.h>
 #include <INA219.h>
-#include <WiFi.h>
-#include <ESPmDNS.h>
-#include <NetworkUdp.h>
-#include <ArduinoOTA.h>
 
 #include "config.h"
 #include "encoders.h"
@@ -29,21 +25,6 @@ const char *VERSION = "2.1.1";
 #include "display_manager.h"
 #include "serial_receiver.h"
 #include "odometry.h"
-
-static const char *WIFI_SSID_FALLBACK = "YOUR_WIFI_SSID";
-static const char *WIFI_PASS_FALLBACK = "YOUR_WIFI_PASSWORD";
-
-String applied_wifi_ssid = "";
-String applied_wifi_password = "";
-
-bool wifi_cfg_dirty = true;
-unsigned long last_wifi_attempt = 0;
-const unsigned long WIFI_RETRY_MS = 10000;
-
-bool ota_started = false;
-uint32_t last_ota_time = 0;
-// как устройство будет видно в Arduino IDE
-String ota_hostname = "jetbot-esp32";
 
 Encoders encoders;
 ErrorManager error_manager;
@@ -87,7 +68,8 @@ float angular_vel_ = 0.0;
 float left_vel_ = 0.0;
 float right_vel_ = 0.0;
 
-// Переменные для хранения принятых данных
+// Сеть Jetson Nano из сообщения $6 (только для показа на OLED-дисплее;
+// сама ESP32 к Wi-Fi не подключается)
 String wifi_ssid = "";
 String wifi_password = "";
 String wifi_ip = "";
@@ -236,7 +218,6 @@ void parseJetsonMessage(const char *fullMessage)
     wifi_ssid = parts[1];
     wifi_password = parts[2];
     wifi_ip = parts[3];
-    wifi_cfg_dirty = true;
   }
 }
 
@@ -281,116 +262,6 @@ float convert_ticks_to_distance(long ticks, char dir)
   return turns * 2 * Pi * WHEEL_RADIUS;
 }
 
-void startArduinoOTA()
-{
-  ArduinoOTA.setHostname(ota_hostname.c_str());
-
-  // Если нужен пароль на OTA, раскомментируй:
-  // ArduinoOTA.setPassword(ota_password.c_str());
-
-  ArduinoOTA
-      .onStart([]()
-               {
-                 String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
-                 Serial.println("OTA start: " + type); // безопаснее на время обновления
-               })
-      .onEnd([]()
-             { Serial.println("\nOTA end"); })
-      .onProgress([](unsigned int progress, unsigned int total)
-                  {
-      if (millis() - last_ota_time > 500) {
-        Serial.printf("OTA progress: %u%%\n", (progress * 100U) / total);
-        last_ota_time = millis();
-      } })
-      .onError([](ota_error_t error)
-               {
-      Serial.printf("OTA error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-      else if (error == OTA_END_ERROR) Serial.println("End Failed"); });
-
-  ArduinoOTA.begin();
-  ota_started = true;
-
-  Serial.print("ArduinoOTA ready, hostname: ");
-  Serial.println(ota_hostname);
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
-}
-
-void serviceWiFi()
-{
-  String desired_ssid = wifi_ssid.length() ? wifi_ssid : String(WIFI_SSID_FALLBACK);
-  String desired_pass = wifi_password.length() ? wifi_password : String(WIFI_PASS_FALLBACK);
-
-  if (desired_ssid.length() == 0)
-  {
-    return;
-  }
-
-  // Уже подключены к нужной сети
-  if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == desired_ssid)
-  {
-    if (!ota_started)
-    {
-      startArduinoOTA();
-    }
-    return;
-  }
-
-  // Нужна новая попытка подключения после обновления конфигурации
-  if (wifi_cfg_dirty && millis() - last_wifi_attempt > 3000)
-  {
-    ota_started = false;
-
-    WiFi.disconnect(true, true);
-    delay(200);
-
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(desired_ssid.c_str(), desired_pass.c_str());
-
-    applied_wifi_ssid = desired_ssid;
-    applied_wifi_password = desired_pass;
-    last_wifi_attempt = millis();
-    wifi_cfg_dirty = false;
-
-    Serial.print("WiFi reconnect requested, SSID = ");
-    Serial.println(desired_ssid);
-    return;
-  }
-
-  // Периодическая повторная попытка, если не подключились
-  if (WiFi.status() != WL_CONNECTED &&
-      applied_wifi_ssid.length() > 0 &&
-      millis() - last_wifi_attempt > WIFI_RETRY_MS)
-  {
-    ota_started = false;
-
-    WiFi.disconnect(true, true);
-    delay(200);
-
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(applied_wifi_ssid.c_str(), applied_wifi_password.c_str());
-    last_wifi_attempt = millis();
-
-    Serial.print("WiFi retry, SSID = ");
-    Serial.println(applied_wifi_ssid);
-    return;
-  }
-
-  // Если подключились после begin()
-  if (WiFi.status() == WL_CONNECTED)
-  {
-
-    if (!ota_started)
-    {
-      startArduinoOTA();
-    }
-  }
-}
-
 void setup()
 {
 
@@ -415,7 +286,6 @@ void setup()
   error_manager.check_exec(display.begin((char *)VERSION), "Error! OLED init failed.");
 
   delay(100);
-  serviceWiFi();
 
   error_manager.check_exec(flashStorage.begin(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R), "Error! NVS init failed.");
   flashStorage.loadPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
@@ -432,11 +302,6 @@ void setup()
 void loop()
 {
 
-  if (ota_started)
-  {
-    ArduinoOTA.handle();
-  }
-  serviceWiFi();
   // Приём с обоих каналов
   mainReceiver.update();
   jetsonReceiver.update();
@@ -552,7 +417,7 @@ void loop()
     }
   }
 
-  // Обработка сообщения от Jetson с информацией о wifi
+  // Сообщение от Jetson с информацией о его сети (для OLED-дисплея)
   if (jetsonReceiver.available())
   {
     const char *raw_1 = jetsonReceiver.getMessage();
