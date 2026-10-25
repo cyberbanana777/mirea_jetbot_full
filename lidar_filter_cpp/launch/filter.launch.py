@@ -19,12 +19,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'start_angle_deg',
-            default_value='-135.0',
+            default_value='0.0',
             description='Sector start in degrees'
         ),
         DeclareLaunchArgument(
             'end_angle_deg',
-            default_value='135.0',
+            default_value='90.0',
             description='Sector end in degrees'
         ),
         DeclareLaunchArgument(
@@ -39,7 +39,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'invert_sector',
-            default_value='False',
+            default_value='True',
             description='Invert sector (keep everything except specified)',
             choices=['True', 'False']
         ),

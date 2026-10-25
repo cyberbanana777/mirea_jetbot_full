@@ -156,7 +156,7 @@ def generate_launch_description():
 
     camera_mode_arg = DeclareLaunchArgument(
         'enable_front_camera',
-        default_value='False',
+        default_value='True',
         description='Enable/Disable front camera (Intel Realsense d435i)',
         choices=['True', 'False']
     )

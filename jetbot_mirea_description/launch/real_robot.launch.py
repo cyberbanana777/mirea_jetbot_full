@@ -15,7 +15,7 @@ def generate_launch_description():
     
     launch_rviz_arg = DeclareLaunchArgument(
         'launch_rviz_description',
-        default_value='True',
+        default_value='False',
         description='Запускает / не запускает RViz2.',
         choices=['True', 'False']
     )
