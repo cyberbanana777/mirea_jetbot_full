@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>realsense_d435i_configs</name>
+  <version>1.0.0</version>
+  <description>Presets and launch file for the Intel RealSense D435i camera of jetbot_mirea (RGB USB2 / RGB USB3 / RGB+Depth / RGB+Depth+PointCloud). Replaces realsense_pkg.</description>
+  <maintainer email="sashagrachev2005@gmail.com">banana-killer</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>realsense2_camera</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,92 @@
+# RGB + Depth + цветное облако точек. Требуется USB 3.x.
+# Оптимизировано под малую задержку и менее шумное облако.
+# Имена параметров сверены с `ros2 param dump` для RealSense ROS 4.58.3.
+# Облако: /camera/camera/depth/color/points (sensor_msgs/PointCloud2).
+/**:
+  ros__parameters:
+    initial_reset: true
+    publish_tf: true
+
+    # ---------- потоки ----------
+    enable_color: true
+    enable_depth: true
+    enable_infra1: false
+    enable_infra2: false
+    enable_gyro: false
+    enable_accel: false
+    # Топик rgbd (color+depth в одном сообщении) требует align_depth и лишней
+    # сериализации. Включай, только если он реально нужен.
+    enable_rgbd: false
+
+    # ---------- профили ----------
+    # Цвет подогнан под разрешение глубины: меньше трафика USB и нагрузки
+    # на конвертацию YUYV -> RGB8.
+    rgb_camera.color_profile: 848x480x30
+    depth_module.depth_profile: 848x480x30
+
+    rgb_camera.enable_auto_exposure: true
+    # false = камера не снижает FPS в темноте ради яркости
+    rgb_camera.auto_exposure_priority: false
+    # 1 = 50 Гц
+    rgb_camera.power_line_frequency: 1
+    depth_module.enable_auto_exposure: true
+
+    # ---------- синхронизация / выравнивание ----------
+    # Для облака с текстурой нужна пара кадров color+depth, поэтому sync включён.
+    enable_sync: true
+    # Выравнивание глубины в кадр цвета дорого. Облако в нём не нуждается
+    # (текстура берётся по экстринсикам). Включай, если нужен топик
+    # aligned_depth_to_color/image_raw.
+    align_depth.enable: false
+
+    # ---------- облако точек ----------
+    pointcloud.enable: true
+    # 1 = depth, 2 = color, 3 = infrared. Значение 2 = текстура из цветного потока.
+    pointcloud.stream_filter: 2
+    pointcloud.stream_index_filter: 0
+    # false = неорганизованное облако без NaN-точек: сообщение меньше, ниже задержка.
+    # true  = организованное облако (ширина x высота), если оно нужно потребителю.
+    pointcloud.ordered_pc: false
+    pointcloud.allow_no_texture_points: false
+
+    # ---------- шум глубины ----------
+    # Отсекаем дальние точки: шум растёт примерно как z^2.
+    # Подстрой под свою сцену (метры).
+    clip_distance: 3.0
+
+    # Прореживание 2x: усредняет соседние пиксели (меньше шума), глубина
+    # становится 424x240, облако в ~4 раза легче.
+    decimation_filter.enable: true
+    decimation_filter.filter_magnitude: 2
+
+    # Пространственное сглаживание (значения по умолчанию из Intel RealSense Viewer).
+    spatial_filter.enable: true
+    spatial_filter.filter_magnitude: 2
+    spatial_filter.filter_smooth_alpha: 0.5
+    spatial_filter.filter_smooth_delta: 20
+    spatial_filter.holes_fill: 0
+
+    # Временное сглаживание. Уменьшает мерцание точек, но даёт шлейф на быстро
+    # движущихся объектах. Меньше alpha = сильнее сглаживание и больше шлейф.
+    temporal_filter.enable: true
+    temporal_filter.filter_smooth_alpha: 0.4
+    temporal_filter.filter_smooth_delta: 20
+    temporal_filter.holes_fill: 3
+
+    # hole_filling_filter намеренно выключен: он дорисовывает точки интерполяцией,
+    # то есть добавляет выдуманную геометрию, а не убирает шум.
+    hole_filling_filter.enable: false
+
+    # ---------- опционально: проверяй по одному, сравнивая шум ----------
+    # Мощность ИК-проектора (D435: 0..360). Выше = лучше на однотонных
+    # поверхностях, но больше нагрев и потребление.
+    # depth_module.laser_power: 250.0
+    # Предустановка глубины. Номер зависит от прошивки, перед включением выполни:
+    #   ros2 param describe /camera/camera depth_module.visual_preset
+    # и выбери "High Accuracy" (меньше шума, больше дыр).
+    # depth_module.visual_preset: 3
+    #
+    # QoS облака. SENSOR_DATA = best effort и маленькая очередь: меньше накопление
+    # задержки. Подписчик тоже должен быть best effort, иначе соединения не будет
+    # (в RViz: Reliability = Best Effort).
+    # pointcloud.pointcloud_qos: SENSOR_DATA

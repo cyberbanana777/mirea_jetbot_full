@@ -32,11 +32,13 @@ def launch_setup(context, *args, **kwargs):
         ),
     )
 
-    transform_node =Node(
+    # Attach the RealSense driver TF tree (camera_link) to the camera frame
+    # of the robot model (d435_link)
+    transform_node = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='static_transform_publisher',
-        arguments=['0', '0', '0', '0', '0', '0', '1', 'realsense_link', 'camera_link']
+        name='camera_static_transform_publisher',
+        arguments=['0', '0', '0', '0', '0', '0', '1', 'd435_link', 'camera_link']
     )
 
     rviz_node = Node(

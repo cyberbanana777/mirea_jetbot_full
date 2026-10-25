@@ -1,0 +1,25 @@
+# Чистый RGB для порта/кабеля USB 2.0. Depth/IMU/IR выключены.
+# По полосе USB 2.0 (~280 Мбит/с реально) 1080p@30 не проходит, поэтому
+# безопасный профиль: 640x480 @ 30 fps.
+# Более высокое разрешение за счёт FPS (проверь, что есть в rs-enumerate-devices):
+#   1280x720x6
+/**:
+  ros__parameters:
+    initial_reset: true
+    publish_tf: true
+
+    enable_color: true
+    enable_depth: false
+    enable_infra1: false
+    enable_infra2: false
+    enable_gyro: false
+    enable_accel: false
+    pointcloud.enable: false
+    align_depth.enable: false
+
+    rgb_camera.profile: 640x480x30
+    rgb_camera.color_profile: 640x480x30
+
+    rgb_camera.enable_auto_exposure: true
+    rgb_camera.auto_exposure_priority: false
+    rgb_camera.power_line_frequency: 1

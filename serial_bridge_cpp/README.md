@@ -1,9 +1,10 @@
 # serial_bridge_cpp
 
-C++-замена трёх Python-узлов из `serial_bridge_package`
-(`twist_to_command`, `serial_bridge_node`, `feedback_processor`) одним узлом.
+Связь ROS 2 с ESP32 робота jetbot_mirea через последовательный порт.
+Один C++-узел `serial_bridge_node`: принимает команды движения, передаёт их
+в ESP32 и публикует одометрию, TF, скорости колёс и коэффициенты PID.
 
-## Что делает
+## Как устроено
 
 ```
 /cmd_vel (Twist) ──────────┐
@@ -18,26 +19,46 @@ C++-замена трёх Python-узлов из `serial_bridge_package`
                             │                        └─> /low_level/serial/feedback (сырые кадры)
 ```
 
-Имена топиков и формат такие же, как у Python-версии, поэтому Nav2, SLAM и
-`simple_PID_configurator` работают без изменений.
+## Возможности
 
-## Чем лучше Python-версии
-
-- поток чтения спит в `poll()` до прихода байтов (Python-версия опрашивала
-  порт в цикле без ожидания и держала ядро на 100%);
-- нет промежуточных строковых топиков и двух лишних процессов;
-- при пропадании порта (переподключение USB) узел сам открывает его снова;
-- узел зарегистрирован как компонент и может работать в component container.
+- **Одна нода вместо трёх.** Заменяет Python-пакет `serial_bridge_package`
+  (`twist_to_command`, `serial_bridge_node`, `feedback_processor`).
+  Имена топиков и форматы сообщений прежние, поэтому Nav2, SLAM и
+  `simple_PID_configurator` работают без изменений.
+- **Почти не нагружает процессор.** Поток чтения спит в `poll()` до прихода
+  байтов. Прежний Python-мост опрашивал порт в цикле без ожидания и держал
+  одно ядро на 100%. Замер на эмуляторе ESP32 (одометрия 10 Гц):
+  93% одного ядра у Python-версии, 0.4% у C++.
+- **Разбор кадров как в прошивке ESP32.** Новый `$` начинает кадр заново,
+  текст вне кадров (например, отладочные строки ESP32) игнорируется, кадр
+  длиннее 256 символов отбрасывается.
+- **Переподключение порта.** Если ESP32 пропал (переподключили USB), узел
+  пишет об этом в лог и сам переоткрывает порт, как только устройство
+  появится снова.
+- **Компонент.** Узел можно загрузить в component container
+  (`serial_bridge_cpp::SerialBridgeNode`).
+- **Без внешних зависимостей** для работы с портом (POSIX termios).
 
 ## Запуск
 
 ```bash
+# отдельно
 ros2 launch serial_bridge_cpp serial_bringup.launch.py
-# или в составе всего робота (по умолчанию use_cpp:=True):
+
+# в составе всего робота
 ros2 launch completed_scripts_jetbot jetbot_sensors_and_motors.launch.py
 ```
 
-## Параметры
+Аргументы `serial_bringup.launch.py`: `serial_port` (по умолчанию
+`/dev/esp32`), `baudrate` (`115200`), `publish_raw_feedback` (`true`).
+
+Конфиг RViz с одометрией и целями навигации:
+
+```bash
+rviz2 -d $(ros2 pkg prefix serial_bridge_cpp)/share/serial_bridge_cpp/rviz/show_all_stats.rviz
+```
+
+## Параметры узла
 
 | Параметр | По умолчанию | Описание |
 |---|---|---|
@@ -48,6 +69,19 @@ ros2 launch completed_scripts_jetbot jetbot_sensors_and_motors.launch.py
 | `publish_tf` | `true` | публиковать TF odom -> base_link |
 | `publish_raw_feedback` | `true` | публиковать сырые кадры в `serial/feedback` (нужно для PID-конфигуратора) |
 | `reconnect_period` | `1.0` | период попыток переоткрыть порт, с |
+
+## Протокол ESP32
+
+| Направление | Кадр | Значение |
+|---|---|---|
+| ROS -> ESP32 | `$1;v;w;#` | линейная (м/с) и угловая (рад/с) скорость из `/cmd_vel` |
+| ESP32 -> ROS | `$1;x;y;theta;v;w;v_left;v_right;#` | одометрия и скорости колёс |
+| ESP32 -> ROS | `$2;KpL;KiL;KdL;KpR;KiR;KdR;#` | коэффициенты PID |
+
+Остальные команды прошивки можно отправить строкой в `/low_level/serial/cmd`,
+узел передаёт их в порт как есть: `$2;v_left;v_right;#` — скорости колёс,
+`$3;...#` — PID только в ОЗУ, `$4;...#` — PID с записью во flash,
+`$5;#` — запрос текущих коэффициентов PID.
 
 ## Тесты
 

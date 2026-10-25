@@ -1,0 +1,28 @@
+# Чистый RGB, максимальное качество: 1920x1080 @ 30 fps. Depth/IMU/IR выключены.
+# Для порта USB 3.x.
+/**:
+  ros__parameters:
+    initial_reset: true
+    publish_tf: true
+
+    enable_color: true
+    enable_depth: false
+    enable_infra1: false
+    enable_infra2: false
+    enable_gyro: false
+    enable_accel: false
+    pointcloud.enable: false
+    align_depth.enable: false
+
+    # Имя параметра зависит от версии обёртки:
+    #   <= 4.51.x : rgb_camera.profile
+    #   >= 4.54.x : rgb_camera.color_profile
+    # Лишний параметр нодой игнорируется, поэтому указаны оба.
+    rgb_camera.profile: 1920x1080x30
+    rgb_camera.color_profile: 1920x1080x30
+
+    rgb_camera.enable_auto_exposure: true
+    # false = камера не роняет FPS в темноте ради яркости
+    rgb_camera.auto_exposure_priority: false
+    # 0 = off, 1 = 50 Hz, 2 = 60 Hz, 3 = auto (против мерцания ламп)
+    rgb_camera.power_line_frequency: 1

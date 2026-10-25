@@ -8,7 +8,6 @@ from launch.actions import (
     IncludeLaunchDescription,
     DeclareLaunchArgument,
     OpaqueFunction,
-    SetEnvironmentVariable
 )
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -46,13 +45,8 @@ def launch_setup(context, *args, **kwargs):
 
     # ========================================================================
     # Get paths to directories with launch-files and configs
-    # use_cpp:=True  - C++ nodes (serial_bridge_cpp, lidar_filter_cpp)
-    # use_cpp:=False - old Python nodes (serial_bridge_package, lidar_filter)
-    use_cpp = LaunchConfiguration('use_cpp').perform(context) == 'True'
-
     pkg1_launch_dir = os.path.join(
-        get_package_share_directory(
-            'serial_bridge_cpp' if use_cpp else 'serial_bridge_package'),
+        get_package_share_directory('serial_bridge_cpp'),
         'launch'
     )
     pkg2_launch_dir = os.path.join(
@@ -61,30 +55,25 @@ def launch_setup(context, *args, **kwargs):
     )
 
     pkg3_launch_dir = os.path.join(
-        get_package_share_directory(
-            'lidar_filter_cpp' if use_cpp else 'lidar_filter'),
+        get_package_share_directory('lidar_filter_cpp'),
         'launch'
     )
 
-    config_dir = get_package_share_directory('completed_scripts_jetbot')
-    config_file = os.path.join(config_dir, 'config', 'realsense_config.yaml')
-    
-    realsense_pkg_share = get_package_share_directory('realsense2_camera')
-    realsense_launch_file = os.path.join(realsense_pkg_share, 'launch', 'rs_launch.py')
-    
-
-    # ========================================================================
-    # Change env - configuration for realsense
-    change_env = SetEnvironmentVariable(
-        name='REALSENSE_CONFIG_FILE',
-        value=config_file,
-        condition=IfCondition(enable_front_camera_condition),
+    camera_launch_dir = os.path.join(
+        get_package_share_directory('realsense_d435i_configs'),
+        'launch'
     )
 
     # ========================================================================
     # Launches
+    # Camera preset (rgb_usb3 / rgb_usb2 / rgb_depth / rgb_depth_pointcloud)
+    # is selected by the camera_mode argument
     front_camera_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(realsense_launch_file),
+        PythonLaunchDescriptionSource(os.path.join(
+            camera_launch_dir, 'd435i.launch.py'
+            )
+        ),
+        launch_arguments={'mode': LaunchConfiguration('camera_mode')}.items(),
         condition=IfCondition(enable_front_camera_condition),
     )
 
@@ -115,12 +104,15 @@ def launch_setup(context, *args, **kwargs):
     )
 
     # ========================================================================
-    # System nodes 
-    transform_node =Node(
+    # System nodes
+    # Attach the camera driver TF tree (camera_link -> camera_*_frame, factory
+    # calibration) to the robot model: d435_link is the camera frame in the
+    # URDF, both frames are at the origin of the depth module.
+    transform_node = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='static_transform_publisher',
-        arguments=['0', '0', '0', '0', '0', '0', '1', 'realsense_link', 'camera_link'],
+        name='camera_static_transform_publisher',
+        arguments=['0', '0', '0', '0', '0', '0', '1', 'd435_link', 'camera_link'],
         condition=IfCondition(enable_front_camera_condition),
     )
 
@@ -128,7 +120,6 @@ def launch_setup(context, *args, **kwargs):
         serial_bridge_launch,
         sllidar_launch,
         lidar_filter_launch,
-        change_env,
         front_camera_launch,
         transform_node,
     ]
@@ -150,6 +141,14 @@ def generate_launch_description():
         default_value='False',
         description='Enable/Disable front camera (Intel Realsense d435i)',
         choices=['True', 'False']
+    )
+
+    camera_preset_arg = DeclareLaunchArgument(
+        'camera_mode',
+        default_value='rgb_depth_pointcloud',
+        description='Camera preset from realsense_d435i_configs '
+                    '(used when enable_front_camera:=True)',
+        choices=['rgb_usb3', 'rgb_usb2', 'rgb_depth', 'rgb_depth_pointcloud']
     )
 
     motors_mode_arg = DeclareLaunchArgument(
@@ -181,18 +180,10 @@ def generate_launch_description():
 
 
     
-    use_cpp_arg = DeclareLaunchArgument(
-        'use_cpp',
-        default_value='True',
-        description='Use C++ low-level nodes (serial bridge, lidar filter) '
-                    'instead of the Python ones',
-        choices=['True', 'False']
-    )
-
     return LaunchDescription([
-        use_cpp_arg,
         lidar_mode_arg,
         camera_mode_arg,
+        camera_preset_arg,
         motors_mode_arg,
 
         lidar_serial_port_arg,

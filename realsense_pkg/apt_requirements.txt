@@ -1,3 +1,0 @@
-ros-$ROS_DISTRO-compressed-image-transport
-ros-$ROS_DISTRO-realsense2-camera
-

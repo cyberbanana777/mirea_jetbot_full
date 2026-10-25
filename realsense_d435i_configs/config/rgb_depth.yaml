@@ -1,0 +1,29 @@
+# RGB + Depth. Требуется USB 3.x.
+# Depth 848x480 — оптимальное разрешение D435 (минимальный шум),
+# RGB 1280x720, глубина выровнена в кадр цветной камеры.
+/**:
+  ros__parameters:
+    initial_reset: true
+    publish_tf: true
+
+    enable_color: true
+    enable_depth: true
+    enable_infra1: false
+    enable_infra2: false
+    enable_gyro: false
+    enable_accel: false
+
+    rgb_camera.profile: 1280x720x30
+    rgb_camera.color_profile: 1280x720x30
+    depth_module.profile: 848x480x30
+    depth_module.depth_profile: 848x480x30
+
+    rgb_camera.enable_auto_exposure: true
+    rgb_camera.auto_exposure_priority: false
+    rgb_camera.power_line_frequency: 1
+    depth_module.enable_auto_exposure: true
+
+    # Топик /camera/camera/aligned_depth_to_color/image_raw
+    align_depth.enable: true
+    enable_sync: true
+    pointcloud.enable: false
