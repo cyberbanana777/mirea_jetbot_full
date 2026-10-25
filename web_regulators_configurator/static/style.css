@@ -1,0 +1,188 @@
+/* jetbot_mirea · веб-настройщик ПИД */
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --text: #1c1f24;
+  --muted: #646b76;
+  --line: #dde1e6;
+  --input: #ffffff;
+  --accent: #2463eb;
+  --accent-text: #ffffff;
+  --ok: #18794e;
+  --warn: #b25b00;
+  --danger: #d0312d;
+  --grid: #e9ecef;
+  --c-meas: #2463eb;
+  --c-sp: #e0730b;
+  --c-left: #2463eb;
+  --c-right: #18794e;
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111317;
+    --panel: #1a1d23;
+    --text: #e6e8eb;
+    --muted: #9aa2ad;
+    --line: #2c313a;
+    --input: #13161b;
+    --accent: #5b8cff;
+    --accent-text: #0b0d10;
+    --ok: #3fbf86;
+    --warn: #f0a24a;
+    --danger: #ff5a52;
+    --grid: #262a32;
+    --c-meas: #6f9bff;
+    --c-sp: #f0a24a;
+    --c-left: #6f9bff;
+    --c-right: #3fbf86;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+h2 { font-size: 15px; margin: 0; font-weight: 600; }
+.hidden { display: none !important; }
+
+/* ------------------------------------------------------------ верхняя панель */
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; flex-direction: column; margin-right: auto; }
+.brand-name { font-weight: 700; font-family: var(--mono); }
+.brand-sub { color: var(--muted); font-size: 12px; }
+.status { display: flex; gap: 8px; flex-wrap: wrap; }
+.pill {
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.pill.ok { color: var(--ok); border-color: currentColor; }
+.pill.warn { color: var(--warn); border-color: currentColor; }
+.pill.bad { color: var(--danger); border-color: currentColor; }
+.stop {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 120px; padding: 8px 18px;
+  background: var(--danger); color: #fff; border: 0; border-radius: var(--radius);
+  font-size: 18px; font-weight: 800; letter-spacing: .05em; cursor: pointer;
+}
+.stop small { font-size: 10px; font-weight: 500; letter-spacing: 0; opacity: .85; }
+.stop:active { transform: translateY(1px); }
+
+/* ------------------------------------------------------------ сетка */
+.layout {
+  display: grid; gap: 16px; padding: 16px;
+  grid-template-columns: minmax(320px, 440px) 1fr;
+  grid-template-areas: "controls charts" "log charts";
+  align-items: start;
+}
+.controls { grid-area: controls; }
+.charts { grid-area: charts; }
+.log { grid-area: log; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; grid-template-areas: "controls" "charts" "log"; }
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px; min-width: 0;
+}
+
+/* ------------------------------------------------------------ вкладки и поля */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px -4px 14px; }
+.tab {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  padding: 8px 10px; color: var(--muted); cursor: pointer; font: inherit;
+}
+.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
+.seg { background: none; border: 0; padding: 6px 12px; color: var(--muted); cursor: pointer; font: inherit; }
+.seg.active { background: var(--accent); color: var(--accent-text); }
+.fields { display: grid; gap: 10px; }
+.fields.two { grid-template-columns: 1fr 1fr; }
+.fields.three { grid-template-columns: 1fr 1fr 1fr; }
+label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); font-size: 13px; }
+input[type=number], select {
+  background: var(--input); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; font: 14px var(--mono); width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.buttons { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 4px; }
+button, .button {
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 14px; font: inherit; cursor: pointer; text-decoration: none;
+}
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button.danger-outline { color: var(--danger); border-color: currentColor; }
+button:disabled, .button.disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
+.hint { color: var(--muted); font-size: 12px; margin: 6px 0; }
+.readout { font: 13px var(--mono); color: var(--muted); margin-top: 10px; font-variant-numeric: tabular-nums; }
+
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+table.pid th, table.pid td { padding: 4px; text-align: left; }
+table.pid thead th { color: var(--muted); font-weight: 500; font-size: 12px; }
+table.pid tbody th { font-weight: 500; white-space: nowrap; padding-right: 8px; }
+.cur { display: block; font: 11px var(--mono); color: var(--muted); padding: 2px 2px 0; }
+.table-scroll { overflow-x: auto; }
+table.results { margin-top: 12px; font-size: 12px; }
+table.results th, table.results td { border-bottom: 1px solid var(--line); padding: 5px 4px; text-align: right; }
+table.results th:first-child, table.results td:first-child { text-align: left; }
+table.results thead th { color: var(--muted); font-weight: 500; }
+
+.progress { height: 6px; background: var(--grid); border-radius: 3px; overflow: hidden; margin: 8px 0; }
+.progress .bar { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+
+/* ------------------------------------------------------------ графики */
+.charts-head, .log-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.charts-head h2, .log-head h2 { margin-right: auto; }
+.charts-tools { display: flex; gap: 8px; align-items: end; }
+.charts-tools label { flex-direction: row; align-items: center; }
+.charts-tools select { width: auto; }
+.legend { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.sw { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--c-meas); margin-left: 8px; }
+.sw.sp { border-top: 2px dashed var(--c-sp); }
+.sw.left { border-top-color: var(--c-left); margin-left: 6px; }
+.sw.right { border-top-color: var(--c-right); margin-left: 6px; }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 1200px) { .chart-grid { grid-template-columns: 1fr; } }
+.chart-box { min-width: 0; }
+.chart-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+canvas { display: block; width: 100%; height: 190px; }
+#step-chart-box { margin-top: 12px; }
+#step-chart { height: 220px; }
+
+/* ------------------------------------------------------------ лог */
+.log-body {
+  height: 260px; overflow-y: auto;
+  font: 12px/1.5 var(--mono); background: var(--input);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+}
+.log-line { white-space: pre-wrap; word-break: break-all; }
+.log-line .t { color: var(--muted); margin-right: 8px; }
+.log-line.tx .d { color: var(--accent); }
+.log-line.rx .d { color: var(--ok); }
+.log-line.info .d { color: var(--warn); }
+.log-line .d { margin-right: 6px; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  background: var(--text); color: var(--bg);
+  padding: 10px 16px; border-radius: 8px; max-width: 90vw; z-index: 20;
+  box-shadow: 0 6px 24px rgba(0,0,0,.25);
+}
+.toast.error { background: var(--danger); color: #fff; }

@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jetbot · настройка ПИД</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%232463eb'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-name">jetbot_mirea</span>
+      <span class="brand-sub">настройка ПИД-регуляторов колёс</span>
+    </div>
+    <div class="status" id="status">
+      <span class="pill" id="st-link" title="Связь страницы с узлом на роботе">нет связи</span>
+      <span class="pill" id="st-esp" title="Частота кадров одометрии от ESP32">ESP32: —</span>
+      <span class="pill" id="st-cmd" title="Активная команда движения">команда: нет</span>
+      <span class="pill warn hidden" id="st-cmdvel"></span>
+    </div>
+    <button class="stop" id="btn-stop" title="Пробел или Esc">СТОП<small>пробел / Esc</small></button>
+  </header>
+
+  <main class="layout">
+    <section class="panel controls">
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="drive" role="tab">Движение</button>
+        <button class="tab" data-tab="pid" role="tab">ПИД</button>
+        <button class="tab" data-tab="step" role="tab">Ступенчатый тест</button>
+      </nav>
+
+      <!-- ===================================================== Движение -->
+      <div class="tab-body" id="tab-drive">
+        <div class="segmented" id="drive-mode">
+          <button class="seg active" data-mode="base">Скорость базы</button>
+          <button class="seg" data-mode="wheels">Скорости колёс</button>
+        </div>
+        <div class="fields two">
+          <label><span id="drive-a-label">Линейная v, м/с</span>
+            <input type="number" id="drive-a" step="0.01" value="0.10"></label>
+          <label><span id="drive-b-label">Угловая ω, рад/с</span>
+            <input type="number" id="drive-b" step="0.1" value="0.0"></label>
+        </div>
+        <p class="hint" id="drive-limits"></p>
+        <div class="buttons">
+          <button class="primary" id="btn-drive">Ехать</button>
+          <button id="btn-drive-zero">Остановить</button>
+        </div>
+        <p class="hint">Пока команда активна, узел повторяет её 5 раз в секунду.
+          Робот остановится, если закрыть или свернуть вкладку, пропадёт связь или
+          нажать СТОП.</p>
+        <div class="readout" id="drive-readout"></div>
+      </div>
+
+      <!-- ===================================================== ПИД -->
+      <div class="tab-body hidden" id="tab-pid">
+        <table class="pid">
+          <thead><tr><th></th><th>Kp</th><th>Ki</th><th>Kd</th></tr></thead>
+          <tbody>
+            <tr><th>Левое</th>
+              <td><input type="number" step="0.01" min="0" id="kp_l"><span class="cur" id="cur-kp_l">—</span></td>
+              <td><input type="number" step="0.01" min="0" id="ki_l"><span class="cur" id="cur-ki_l">—</span></td>
+              <td><input type="number" step="0.001" min="0" id="kd_l"><span class="cur" id="cur-kd_l">—</span></td></tr>
+            <tr><th>Правое</th>
+              <td><input type="number" step="0.01" min="0" id="kp_r"><span class="cur" id="cur-kp_r">—</span></td>
+              <td><input type="number" step="0.01" min="0" id="ki_r"><span class="cur" id="cur-ki_r">—</span></td>
+              <td><input type="number" step="0.001" min="0" id="kd_r"><span class="cur" id="cur-kd_r">—</span></td></tr>
+          </tbody>
+        </table>
+        <p class="hint">Под полями — текущие коэффициенты в ESP32.</p>
+        <label class="check"><input type="checkbox" id="pid-same"> Одинаковые для обоих колёс</label>
+        <div class="buttons">
+          <button id="btn-pid-get">Получить текущие</button>
+          <button id="btn-pid-copy">Текущие → в поля</button>
+        </div>
+        <div class="buttons">
+          <button class="primary" id="btn-pid-set">Установить</button>
+          <button class="danger-outline" id="btn-pid-flash">Записать во flash</button>
+        </div>
+        <p class="hint">«Установить» меняет коэффициенты до перезагрузки ESP32,
+          «Записать во flash» — сохраняет их насовсем.</p>
+      </div>
+
+      <!-- ===================================================== Ступенчатый тест -->
+      <div class="tab-body hidden" id="tab-step">
+        <div class="segmented" id="step-mode">
+          <button class="seg active" data-mode="wheels">Скорости колёс</button>
+          <button class="seg" data-mode="base">Скорость базы</button>
+        </div>
+        <div class="fields three">
+          <label><span id="step-a-label">Левое, м/с</span>
+            <input type="number" id="step-a" step="0.01" value="0.20"></label>
+          <label><span id="step-b-label">Правое, м/с</span>
+            <input type="number" id="step-b" step="0.01" value="0.20"></label>
+          <label><span>Длительность, с</span>
+            <input type="number" id="step-duration" step="0.5" min="0.2" value="3"></label>
+        </div>
+        <p class="hint" id="step-limits"></p>
+        <div class="buttons">
+          <button class="primary" id="btn-step-start">Запустить</button>
+          <button id="btn-step-abort">Прервать</button>
+          <a class="button" id="btn-step-csv" href="/api/step_test/result.csv" download>Скачать CSV</a>
+        </div>
+        <div class="progress"><div class="bar" id="step-bar"></div></div>
+        <p class="hint" id="step-state">Робот поедет вперёд — проверьте, что перед ним есть место.</p>
+        <div class="table-scroll">
+          <table class="results hidden" id="step-results">
+            <thead><tr><th>Сигнал</th><th>Уставка</th>
+              <th title="Время нарастания от 10 до 90 % уставки">Нараст., с</th>
+              <th title="Перерегулирование, % от уставки">Перерег., %</th>
+              <th title="Время установления в полосе ±5 % уставки">Устан., с</th>
+              <th title="Установившаяся ошибка: уставка минус среднее за последние 25 % ступеньки">Ошибка</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="hint hidden" id="step-note">Скорости приходят из прошивки уже сглаженными
+          (скользящее среднее 0.5 с), поэтому время нарастания включает задержку фильтра.</p>
+        <div class="chart-box hidden" id="step-chart-box">
+          <div class="chart-title">Записанный отклик колёс:
+            <span class="sw left"></span>левое <span class="sw right"></span>правое, пунктир — уставка</div>
+          <canvas id="step-chart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== Графики -->
+    <section class="panel charts">
+      <div class="charts-head">
+        <h2>Скорости</h2>
+        <div class="charts-tools">
+          <label>Окно
+            <select id="window">
+              <option value="5">5 с</option>
+              <option value="10" selected>10 с</option>
+              <option value="20">20 с</option>
+              <option value="30">30 с</option>
+            </select></label>
+          <button id="btn-pause">Пауза</button>
+        </div>
+      </div>
+      <div class="legend"><span class="sw meas"></span>измерено <span class="sw sp"></span>уставка</div>
+      <div class="chart-grid">
+        <div class="chart-box"><div class="chart-title">Линейная v, м/с</div><canvas id="chart-v"></canvas></div>
+        <div class="chart-box"><div class="chart-title">Угловая ω, рад/с</div><canvas id="chart-w"></canvas></div>
+        <div class="chart-box"><div class="chart-title">Левое колесо, м/с</div><canvas id="chart-vl"></canvas></div>
+        <div class="chart-box"><div class="chart-title">Правое колесо, м/с</div><canvas id="chart-vr"></canvas></div>
+      </div>
+    </section>
+
+    <!-- ===================================================== Лог -->
+    <section class="panel log">
+      <div class="log-head">
+        <h2>Лог</h2>
+        <label class="check hidden" id="log-odom-box"><input type="checkbox" id="log-odom"> кадры одометрии</label>
+        <button id="btn-log-clear">Очистить</button>
+      </div>
+      <div class="log-body" id="log"></div>
+    </section>
+  </main>
+
+  <div class="toast hidden" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

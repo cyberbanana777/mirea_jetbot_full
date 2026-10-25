@@ -64,6 +64,11 @@ def launch_setup(context, *args, **kwargs):
         'launch'
     )
 
+    web_configurator_launch_dir = os.path.join(
+        get_package_share_directory('web_regulators_configurator'),
+        'launch'
+    )
+
     # ========================================================================
     # Launches
     # Camera preset (rgb_usb3 / rgb_usb2 / rgb_depth / rgb_depth_pointcloud)
@@ -75,6 +80,18 @@ def launch_setup(context, *args, **kwargs):
         ),
         launch_arguments={'mode': LaunchConfiguration('camera_mode')}.items(),
         condition=IfCondition(enable_front_camera_condition),
+    )
+
+    # Web UI for PID tuning: http://<robot IP>:<web_configurator_port>
+    web_configurator_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            web_configurator_launch_dir, 'web_configurator.launch.py'
+            )
+        ),
+        launch_arguments={'port': LaunchConfiguration('web_configurator_port')}.items(),
+        condition=IfCondition(PythonExpression([
+            '"', LaunchConfiguration('enable_web_configurator'), '" == "True"'
+        ])),
     )
 
     serial_bridge_launch = IncludeLaunchDescription(
@@ -122,6 +139,7 @@ def launch_setup(context, *args, **kwargs):
         lidar_filter_launch,
         front_camera_launch,
         transform_node,
+        web_configurator_launch,
     ]
 
 
@@ -149,6 +167,20 @@ def generate_launch_description():
         description='Camera preset from realsense_d435i_configs '
                     '(used when enable_front_camera:=True)',
         choices=['rgb_usb3', 'rgb_usb2', 'rgb_depth', 'rgb_depth_pointcloud']
+    )
+
+    web_configurator_arg = DeclareLaunchArgument(
+        'enable_web_configurator',
+        default_value='False',
+        description='Enable/Disable web UI for PID tuning '
+                    '(web_regulators_configurator)',
+        choices=['True', 'False']
+    )
+
+    web_configurator_port_arg = DeclareLaunchArgument(
+        'web_configurator_port',
+        default_value='8080',
+        description='Port of the PID tuning web UI',
     )
 
     motors_mode_arg = DeclareLaunchArgument(
@@ -185,6 +217,8 @@ def generate_launch_description():
         camera_mode_arg,
         camera_preset_arg,
         motors_mode_arg,
+        web_configurator_arg,
+        web_configurator_port_arg,
 
         lidar_serial_port_arg,
         angle_compensate_arg,

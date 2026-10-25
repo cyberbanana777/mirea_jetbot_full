@@ -218,6 +218,23 @@ C++-пакеты `serial_bridge_cpp` и `lidar_filter_cpp`. Пакет `realsens
 
 ---
 
+### [ ] Веб-настройщик ПИД `web_regulators_configurator`
+
+Затрагивает методичку R3 и `2_jetbot_drivers`.
+
+- [ ] **R3 «Как настроить ПИД-регуляторы»:** добавить способ через веб-страницу:
+  `ros2 launch completed_scripts_jetbot jetbot_sensors_and_motors.launch.py enable_web_configurator:=True`,
+  затем открыть `http://<IP робота>:8080` (IP — на OLED-дисплее). Описать
+  ступенчатый тест как основной способ подбора коэффициентов.
+- [ ] **`2_jetbot_drivers`:** добавить главу про пакет (по образцу глав про
+  `simple_*`): возможности, запуск, параметры, безопасность («мёртвая рука»,
+  вкладка должна быть активной), Docker (`--network host` или `-p 8080:8080`).
+  Содержание — в `web_regulators_configurator/README.md`.
+- [ ] **`3_Доп_ПО`, таблица 7:** аргументы `enable_web_configurator` и
+  `web_configurator_port` у `jetbot_sensors_and_motors.launch.py`.
+
+---
+
 ## Замечено попутно (к переходу на C++ не относится)
 
 - [ ] `2_jetbot_drivers`, приложение Г, и методичка S1 ссылаются на

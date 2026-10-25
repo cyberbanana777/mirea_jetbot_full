@@ -6,7 +6,7 @@ package_name = 'completed_scripts_jetbot'
 
 setup(
     name=package_name,
-    version='1.2.0',
+    version='1.3.0',
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',

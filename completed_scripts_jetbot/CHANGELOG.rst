@@ -2,6 +2,13 @@
 Changelog for package completed_scripts_jetbot
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+1.3.0 (2026-10-25)
+------------------
+* ``jetbot_sensors_and_motors.launch.py``: аргументы ``enable_web_configurator``
+  (по умолчанию ``False``) и ``web_configurator_port`` (``8080``) - запуск
+  веб-настройщика ПИД ``web_regulators_configurator``.
+* ``package.xml``: зависимость ``web_regulators_configurator``.
+
 1.2.0 (2026-10-25)
 ------------------
 * Камера RealSense D435i переведена на пакет ``realsense_d435i_configs``
