@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace serial_bridge_cpp
@@ -20,8 +21,13 @@ namespace serial_bridge_cpp
 // Byte-stream state machine that cuts "$...#" frames out of the UART stream.
 // Same logic as SerialReceiver in the ESP32 firmware:
 //  - '$' always starts a new frame (an unfinished previous one is dropped);
-//  - bytes outside of a frame (e.g. "\r\n") are ignored;
 //  - a frame longer than max_len is dropped as garbage.
+// Bytes outside of frames are collected into text lines (Serial.println() of
+// the firmware: errors, Wi-Fi / OTA messages). A line ends with '\n';
+// the "\r\n" right after a frame belongs to the frame (so a text line
+// interrupted by a frame stays one line); '\r' is ignored, other
+// non-printable bytes become '?', empty lines are skipped and a line
+// longer than max_len is emitted in parts.
 class FrameParser
 {
 public:
@@ -29,12 +35,16 @@ public:
   : max_len_(max_len)
   {
     frame_.reserve(max_len_);
+    text_.reserve(max_len_);
   }
 
-  // Feed raw bytes; on_frame(const std::string &) is called for every
-  // complete frame (including '$' and '#').
-  template<typename Callback>
-  void feed(const char * data, std::size_t size, Callback && on_frame)
+  // Feed raw bytes. on_frame(const std::string &) is called for every
+  // complete frame (including '$' and '#'), on_text(const std::string &) -
+  // for every complete text line outside of frames (without "\r\n").
+  template<typename FrameCallback, typename TextCallback>
+  void feed(
+    const char * data, std::size_t size, FrameCallback && on_frame,
+    TextCallback && on_text)
   {
     for (std::size_t i = 0; i < size; ++i) {
       const char c = data[i];
@@ -50,23 +60,58 @@ public:
         frame_.push_back(c);
         if (c == '#') {
           receiving_ = false;
+          after_frame_ = true;
           on_frame(frame_);
           frame_.clear();
         }
+      } else if (after_frame_ && (c == '\r' || c == '\n')) {
+        after_frame_ = (c == '\r');   // "\r\n" после кадра - часть кадра
+      } else if (c == '\n') {
+        flush_text(on_text);
+      } else if (c != '\r') {
+        after_frame_ = false;
+        const auto u = static_cast<unsigned char>(c);
+        text_.push_back((u >= 0x20 && u < 0x7f) ? c : (c == '\t' ? ' ' : '?'));
+        if (text_.size() >= max_len_) {
+          flush_text(on_text);
+        }
       }
     }
+  }
+
+  // Frames only (text outside of frames is dropped)
+  template<typename FrameCallback>
+  void feed(const char * data, std::size_t size, FrameCallback && on_frame)
+  {
+    feed(data, size, std::forward<FrameCallback>(on_frame), [](const std::string &) {});
   }
 
   void reset()
   {
     receiving_ = false;
     frame_.clear();
+    text_.clear();
+    after_frame_ = false;
   }
 
 private:
+  template<typename TextCallback>
+  void flush_text(TextCallback && on_text)
+  {
+    // trim spaces; skip empty lines (e.g. "\r\n" after every frame)
+    const auto first = text_.find_first_not_of(' ');
+    if (first != std::string::npos) {
+      const auto last = text_.find_last_not_of(' ');
+      on_text(text_.substr(first, last - first + 1));
+    }
+    text_.clear();
+  }
+
   std::size_t max_len_;
   std::string frame_;
+  std::string text_;
   bool receiving_ = false;
+  bool after_frame_ = false;
 };
 
 // Split a complete frame "$1;0.1;-2.5;#" into numbers {1, 0.1, -2.5}.

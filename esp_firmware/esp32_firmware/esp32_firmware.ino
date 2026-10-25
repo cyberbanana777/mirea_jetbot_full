@@ -5,9 +5,9 @@
 /**
   @author Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
   @date 25.10.2026
-  @version 2.1.0
+  @version 2.1.1
 */
-const char *VERSION = "2.1.0";
+const char *VERSION = "2.1.1";
 
 #include <Arduino.h>
 #include <math.h>
@@ -394,10 +394,11 @@ void serviceWiFi()
 void setup()
 {
 
+  // Светодиод ошибок настраиваем и гасим первым делом
+  error_manager.begin(ERROR_LED_PIN);
+
   Serial.begin(115200);
   Serial1.begin(115200);
-
-  error_manager.begin(ERROR_LED_PIN);
 
   error_manager.check_exec(Wire.begin(), "Error! Failed to init I2C bus.");
   Wire.setTimeOut(50); // 50 мс таймаут на транзакцию
@@ -579,4 +580,11 @@ void loop()
   {
     display.update(wifi_ssid, wifi_ip, wifi_password, bus_voltage, current, pros);
   }
+
+  // Индикация ошибок во время работы: светодиод часто мигает, пока
+  // устройство на I2C не отвечает или напряжение батареи ниже минимума
+  // (в этом случае моторы и так остановлены аварийно).
+  bool lowBattery = inaOk && bus_voltage < min_voltage;
+  error_manager.setFault(!inaOk || !pwmOk || !oledOk || lowBattery);
+  error_manager.update();
 }

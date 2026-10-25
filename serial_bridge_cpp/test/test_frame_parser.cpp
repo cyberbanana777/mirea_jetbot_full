@@ -93,3 +93,65 @@ TEST(ParseFields, Malformed)
   EXPECT_FALSE(parse_fields("$#", f));
   EXPECT_FALSE(parse_fields("$;;#", f));
 }
+
+static void feed_both(
+  FrameParser & p, const std::string & data, std::vector<std::string> & frames,
+  std::vector<std::string> & lines)
+{
+  p.feed(
+    data.data(), data.size(),
+    [&](const std::string & f) {frames.push_back(f);},
+    [&](const std::string & l) {lines.push_back(l);});
+}
+
+TEST(FrameParserText, TextLinesBetweenFrames)
+{
+  FrameParser p;
+  std::vector<std::string> frames, lines;
+  feed_both(p, "$1;1;#\r\nINA219 reinit failed\r\n$1;2;#\r\nWiFi retry, SSID = lab\r\n",
+    frames, lines);
+  ASSERT_EQ(frames.size(), 2u);
+  ASSERT_EQ(lines.size(), 2u);
+  EXPECT_EQ(lines[0], "INA219 reinit failed");
+  EXPECT_EQ(lines[1], "WiFi retry, SSID = lab");
+}
+
+TEST(FrameParserText, LineSplitBetweenReadsAndAroundFrame)
+{
+  FrameParser p;
+  std::vector<std::string> frames, lines;
+  feed_both(p, "OTA er", frames, lines);
+  EXPECT_TRUE(lines.empty());
+  feed_both(p, "ror[2]: $1;5;#\r\nConnect Failed\r", frames, lines);
+  EXPECT_TRUE(lines.empty());
+  feed_both(p, "\n", frames, lines);
+  ASSERT_EQ(frames.size(), 1u);
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_EQ(lines[0], "OTA error[2]: Connect Failed");
+}
+
+TEST(FrameParserText, EmptyLinesSkippedAndGarbageSanitized)
+{
+  FrameParser p;
+  std::vector<std::string> frames, lines;
+  feed_both(p, std::string("\r\n\r\n  \r\n\x01\xff boot\r\n", 17), frames, lines);
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_EQ(lines[0], "?? boot");
+}
+
+TEST(FrameParserText, LongLineEmittedInParts)
+{
+  FrameParser p(16);
+  std::vector<std::string> frames, lines;
+  feed_both(p, std::string(40, 'a') + "\n", frames, lines);
+  ASSERT_EQ(lines.size(), 3u);
+  EXPECT_EQ(lines[0].size(), 16u);
+  EXPECT_EQ(lines[2].size(), 8u);
+}
+
+TEST(FrameParserText, FramesOnlyOverloadIgnoresText)
+{
+  FrameParser p;
+  auto frames = feed_all(p, "hello\r\n$1;1;#\r\n");
+  ASSERT_EQ(frames.size(), 1u);
+}

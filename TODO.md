@@ -74,13 +74,16 @@ C++-пакеты `serial_bridge_cpp` и `lidar_filter_cpp`. Пакет `realsens
   - публикации: `/odom` (`nav_msgs/msg/Odometry`), TF `odom -> base_link`,
     `/sensors/wheel/left/speed` и `/sensors/wheel/right/speed`
     (`std_msgs/msg/Float32`), `/PIDcoeffs` (`std_msgs/msg/String`),
-    `/low_level/serial/feedback` (`std_msgs/msg/String`, сырые кадры от ESP32).
+    `/low_level/serial/feedback` (`std_msgs/msg/String`, сырые кадры от ESP32),
+    `/low_level/serial/text` (`std_msgs/msg/String`, текст ESP32 вне кадров:
+    ошибки, Wi-Fi, OTA; с `serial_bridge_cpp` 1.2.0).
 - [ ] **Топики, которых больше нет:** `/esp32_input`, `/esp32_feedback`,
   `serial/from`, `serial/to`. Они упоминаются в тексте нод и в таблицах.
 - [ ] **Таблицы 3 и 5 (параметры)** заменить одной таблицей параметров:
   `serial_port` (`/dev/esp32`), `baudrate` (`115200`), `frame_id` (`odom`),
   `child_frame_id` (`base_link`), `publish_tf` (`true`),
-  `publish_raw_feedback` (`true`), `reconnect_period` (`1.0` с).
+  `publish_raw_feedback` (`true`), `log_text_messages` (`true`),
+  `reconnect_period` (`1.0` с).
   Параметров `ros_in_topic` и `ros_out_topic` больше нет. Ещё в таблице 3
   значение по умолчанию записано как `dev/esp32` без начального `/`.
 - [ ] **`child_frame_id`:** в таблицах 5 и 6 указан `base_footprint`. В

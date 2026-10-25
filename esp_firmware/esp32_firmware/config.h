@@ -7,7 +7,7 @@ const float WHEEL_RADIUS = 0.065/2.0; // радиус ведущего коле�
 const float max_voltage = 4.2 * 3;
 const float min_voltage = 3.3 * 3;
 
-const int ERROR_LED_PIN = 2; // Светодиод для индикации ошибок
+const int ERROR_LED_PIN = 2; // Светодиод D2 на плате: не горит - норма, мигает - ошибка (см. errors.h)
 
 // Подключение энкодеров
 const uint8_t PIN_R_A = 34;  // Правое колесо, канал А

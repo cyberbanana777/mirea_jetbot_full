@@ -18,6 +18,7 @@
 // device disappears.
 
 #include <array>
+#include <cctype>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -67,6 +68,8 @@ public:
     publish_tf_ = declare_parameter<bool>("publish_tf", true);
     // Raw frames are only needed by simple_PID_configurator (log window)
     publish_raw_ = declare_parameter<bool>("publish_raw_feedback", true);
+    // Text lines from the ESP32 outside of frames (errors, Wi-Fi / OTA messages)
+    log_text_ = declare_parameter<bool>("log_text_messages", true);
     reconnect_period_ = std::chrono::duration<double>(
       declare_parameter<double>("reconnect_period", 1.0));
     // Diagonals of the odometry covariances (placeholders, see covariance.hpp)
@@ -86,6 +89,7 @@ public:
       "/sensors/wheel/left/speed", 10);
     right_speed_pub_ = create_publisher<std_msgs::msg::Float32>(
       "/sensors/wheel/right/speed", 10);
+    text_pub_ = create_publisher<std_msgs::msg::String>("serial/text", 10);
     if (publish_raw_) {
       raw_pub_ = create_publisher<std_msgs::msg::String>("serial/feedback", 10);
     }
@@ -150,7 +154,8 @@ private:
       if (n > 0) {
         parser_.feed(
           buffer.data(), static_cast<std::size_t>(n),
-          [this](const std::string & frame) {handle_frame(frame);});
+          [this](const std::string & frame) {handle_frame(frame);},
+          [this](const std::string & line) {handle_text(line);});
       } else if (n < 0) {
         RCLCPP_ERROR(
           get_logger(), "Serial port %s lost, reconnecting...", port_name_.c_str());
@@ -183,6 +188,29 @@ private:
   }
 
   // ---------------------------------------------------------------- frames
+  // Text line from the ESP32 (Serial.println outside of $...# frames):
+  // published to serial/text and, optionally, written to the ROS log.
+  void handle_text(const std::string & line)
+  {
+    std_msgs::msg::String msg;
+    msg.data = line;
+    text_pub_->publish(msg);
+    if (!log_text_) {
+      return;
+    }
+    std::string lower(line);
+    for (auto & ch : lower) {
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    if (lower.find("error") != std::string::npos || lower.find("fail") != std::string::npos ||
+      lower.find("warn") != std::string::npos)
+    {
+      RCLCPP_WARN(get_logger(), "ESP32: %s", line.c_str());
+    } else {
+      RCLCPP_INFO(get_logger(), "ESP32: %s", line.c_str());
+    }
+  }
+
   void handle_frame(const std::string & frame)
   {
     if (raw_pub_) {
@@ -273,6 +301,7 @@ private:
   std::string child_frame_id_;
   bool publish_tf_;
   bool publish_raw_;
+  bool log_text_;
   std::chrono::duration<double> reconnect_period_;
   std::array<double, 36> pose_covariance_;
   std::array<double, 36> twist_covariance_;
@@ -283,6 +312,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr left_speed_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr right_speed_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr raw_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr text_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr raw_cmd_sub_;
