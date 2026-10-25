@@ -8,3 +8,6 @@ simple_regulators_configurator_pkg
 development
 Slam_and_Navigation.md
 teleop*
+
+jetbot_telemetria.service
+jetbot_telemetria.timer

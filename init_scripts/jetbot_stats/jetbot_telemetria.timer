@@ -1,9 +1,0 @@
-[Unit]
-Description=Timer for jetbot_telemetria
-
-[Timer]
-OnBootSec=30sec
-OnUnitActiveSec=30sec
-
-[Install]
-WantedBy=timers.target

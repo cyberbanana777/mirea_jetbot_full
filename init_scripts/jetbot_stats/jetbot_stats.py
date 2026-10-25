@@ -15,8 +15,8 @@ def is_wlan0_up():
     try:
         result = subprocess.run(
             ['ip', 'link', 'show', WLAN_IFACE],
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True,
             check=True,
             timeout=5
         )
@@ -30,8 +30,8 @@ def get_wlan0_ip():
     try:
         result = subprocess.run(
             ['ip', '-4', 'addr', 'show', WLAN_IFACE],
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True,
             check=True,
             timeout=5
         )
@@ -50,8 +50,8 @@ def get_ssid(iface=WLAN_IFACE):
     try:
         result = subprocess.run(
             ['iwgetid', iface, '-r'],
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True,
             check=True,
             timeout=5
         )
@@ -65,8 +65,8 @@ def get_ssid(iface=WLAN_IFACE):
     try:
         result = subprocess.run(
             ['nmcli', '-t', '-f', 'active,ssid,device', 'dev', 'wifi'],
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True,
             check=True,
             timeout=5
         )
@@ -91,19 +91,19 @@ def get_password_from_files(ssid):
         return "Password not found (no connections dir)"
 
     files = glob.glob(os.path.join(connections_dir, "*"))
-    
+
     for file_path in files:
         try:
             # Проверяем, содержит ли файл строку с нужным SSID
             grep_cmd = ['grep', '-q', f'ssid={ssid}', file_path]  # sudo не нужен, если скрипт от root
-            result = subprocess.run(grep_cmd, capture_output=True)
-            
+            result = subprocess.run(grep_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
             if result.returncode == 0:
                 cat_cmd = ['cat', file_path]
                 cat_result = subprocess.run(
                     cat_cmd,
-                    capture_output=True,
-                    text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    universal_newlines=True,
                     check=True,
                     timeout=5
                 )
@@ -128,8 +128,8 @@ def get_password(ssid):
         cmd = ['nmcli', '--show-secrets', 'connection', 'show', ssid]
         result = subprocess.run(
             cmd,
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            universal_newlines=True,
             check=True,
             timeout=5
         )

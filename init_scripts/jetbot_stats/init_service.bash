@@ -1,5 +1,7 @@
 #!/bin/bash
 
+sudo apt isntall python3-serial
+
 SERVICE_NAME='jetbot_telemetria' 
 
 sudo cp $SERVICE_NAME.service /etc/systemd/system/
