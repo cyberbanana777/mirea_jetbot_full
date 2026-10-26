@@ -34,6 +34,18 @@ public:
                  float Kp_R, float Ki_R, float Kd_R);
 
     /**
+     * Загружает параметры feedforward (u_ff = sign(v) * (deadzone + gain * |v|)).
+     * Если в NVS их ещё нет (прошивка обновлена поверх старой), остаются значения,
+     * с которыми переменные были переданы (заводские из config.h).
+     */
+    void loadFF(float &gainL, float &deadzoneL, float &gainR, float &deadzoneR);
+
+    /**
+     * Сохраняет параметры feedforward в NVS.
+     */
+    void saveFF(float gainL, float deadzoneL, float gainR, float deadzoneR);
+
+    /**
      * Проверяет, был ли уже выполнен первый запуск (наличие флага nvsInit).
      */
     bool isInitialized();

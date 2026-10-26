@@ -1,0 +1,1412 @@
+diff -ruN fw_orig/esp32_firmware/command_parser.cpp fw_new/esp32_firmware/command_parser.cpp
+--- fw_orig/esp32_firmware/command_parser.cpp	2026-05-07 11:12:02.000000000 +0300
++++ fw_new/esp32_firmware/command_parser.cpp	2026-10-26 23:18:43.641216925 +0300
+@@ -17,7 +17,8 @@
+   }
+   if (*p != ';') return cmd;  // нет разделителя
+   int rawType = atoi(typeStr);
+-  if (rawType < 1 || rawType > 5) return cmd;
++  const bool known = (rawType >= 1 && rawType <= 5) || (rawType >= 10 && rawType <= 13);
++  if (!known) return cmd;
+   cmd.type = static_cast<Command>(rawType);
+ 
+   // 2. Извлекаем аргументы до '#'
+diff -ruN fw_orig/esp32_firmware/command_parser.h fw_new/esp32_firmware/command_parser.h
+--- fw_orig/esp32_firmware/command_parser.h	2026-05-07 11:11:06.000000000 +0300
++++ fw_new/esp32_firmware/command_parser.h	2026-10-26 23:18:41.733216968 +0300
+@@ -5,14 +5,19 @@
+ #include <Arduino.h>
+ #include <stdint.h>
+ 
+-// Типы команд (соответствуют msg_type 1..5)
++// Типы команд (соответствуют msg_type)
+ enum class Command : uint8_t {
+   UNKNOWN = 0,
+   SET_TWIST = 1,         // линейная + угловая скорость
+   SET_WHEEL_SPEEDS = 2,  // скорости колёс
+   SET_PID_TEMP = 3,      // установить ПИД только в ОЗУ
+   SET_PID_FLASH = 4,     // установить ПИД и записать во flash
+-  REQUEST_PID = 5        // запросить текущие коэффициенты
++  REQUEST_PID = 5,       // запросить текущие коэффициенты
++  // --- Калибровка и отладка контура скорости (см. tools/README_speed.md) ---
++  SET_DUTY = 10,         // $10;duty_L;duty_R;#   разомкнутый режим: скважность ШИМ [-1, 1]
++  SET_FF = 11,           // $11;gain_L;dz_L;gain_R;dz_R;save#  feedforward (save = 1 - записать во flash)
++  SET_TELEMETRY = 12,    // $12;on;#              телеметрия $3 на 100 Гц, одометрия $1 на паузе
++  REQUEST_FF = 13        // $13;#                 запросить параметры feedforward ($4)
+ };
+ 
+ struct ParsedCommand {
+@@ -34,4 +39,4 @@
+   }
+ };
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff -ruN fw_orig/esp32_firmware/config.h fw_new/esp32_firmware/config.h
+--- fw_orig/esp32_firmware/config.h	2026-10-25 22:12:19.000000000 +0300
++++ fw_new/esp32_firmware/config.h	2026-10-27 01:09:28.398669550 +0300
+@@ -15,30 +15,80 @@
+ const uint8_t PIN_L_A = 32;  // Левое колесо, канал А
+ const uint8_t PIN_L_B = 33;  // Левое колесо, канал В
+ 
+-// Коэффициенты по умолчанию для регуляторов
+-float KP_R = 0.8;
+-float KI_R = 1.5;
+-float KD_R = 0.04;
+-
+-float KP_L = 0.85; 
+-float KI_L = 1.5;
+-float KD_L = 0.05;
++// Коэффициенты по умолчанию для регуляторов (ПИ, скважность на м/с).
++// Получены калибровкой tools/mtcal.py на роботе с поднятыми колёсами (lam 0.5) и проверены
++// tools/steptest.py. Это заводские значения: они используются на пустом flash, а командами
++// $4 и $11 их можно переопределить без перепрошивки (значения хранятся в NVS).
++// Kd = 0: производная по зашумлённой скорости пользы не даёт.
++float KP_R = 1.426;
++float KI_R = 10.009;
++float KD_R = 0.0;
++
++float KP_L = 0.951;
++float KI_L = 5.475;
++float KD_L = 0.0;
+ 
+-// Частота дискретизации для ПИДов
+-float DT = 100;
++// Период контура скорости, мс (передаётся в uPID.setDt)
++float DT = 10;
+ 
+ const double MAX_CONSTRUCTIVE_VELOCITY = 0.5; // м/сек
+ 
++// === Энкодер и оценка скорости (speed_estimator.h) ===
++// 270 меток на оборот вала редуктора, квадратура x4 -> 1080 фронтов на оборот
++const float ENC_PPR = 270.0;
++const float ENC_EDGES_PER_REV = ENC_PPR * 4.0;
++// Левый энкодер считает "назад" при движении колеса вперёд (мотор зеркальный)
++const float ENC_SIGN_R = 1.0;
++const float ENC_SIGN_L = -1.0;
++// Нет фронтов дольше этого времени - скорость 0. Фронт на 0.05 об/с приходит раз
++// в 18.5 мс, поэтому ~3 интервала. Ниже ~0.015 об/с скорость читается как 0.
++const uint32_t SPEED_TIMEOUT_US = 60000;
++// Минимум фронтов в окне измерения. Выше ~0.2 об/с на такт приходится больше двух фронтов,
++// и параметр ни на что не влияет. На низких скоростях окно растягивается на несколько
++// тактов: 1 - максимум быстродействия, но у неидеальной квадратуры (сдвиг фаз не 90 град,
++// скважность не 50%) интервалы между фронтами неравны, и скорость "рябит" (на моделе при
++// неравенстве 10%: 11% СКО на 0.05 об/с). 2 убирает рябь в ~4 раза за один лишний интервал
++// между фронтами (18 мс на 0.05 об/с), 4 (целая метка) - почти полностью, но окно 74 мс.
++// Должно выполняться: SPEED_MIN_EDGES * (интервал фронтов на минимальной скорости) < SPEED_TIMEOUT_US.
++const int32_t SPEED_MIN_EDGES = 2;
++// |скорость| выше этого, об/с, считается помехой и отбрасывается
++const float SPEED_MAX_SANE_REV_S = 6.0;
++// Фильтр скорости на такте контура: 1.0 - выключен; 0.5 даёт tau ~ 14 мс при 100 Гц.
++// Скользящее среднее на 5 значений из старой схемы убрано совсем.
++const float SPEED_FILTER_K = 1.0;
++
++// === Контур скорости: feedforward + ПИ ===
++// Управление: u = sign(v_зад) * (FF_DEADZONE + FF_GAIN * |v_зад|) + ПИ(ошибка), u в [-1, 1]
++// FF_DEADZONE - скважность ШИМ, с которой колесо вращается (трение движения), FF_GAIN -
++// прирост скважности на 1 м/с. Значения откалиброваны в воздухе (mtcal.py); на полу
++// мёртвая зона больше (около 0.3), и недостающее добирает интеграл ПИ.
++float FF_DEADZONE_L = 0.1073;
++float FF_DEADZONE_R = 0.1114;
++float FF_GAIN_L = 0.5848;
++float FF_GAIN_R = 0.9133;
++
+ // === Таймеры ===
+-// Период ПИД-регуляторов (мкс). Коэффициенты ПИД подобраны под этот период.
+-const unsigned long timer_timeout = DT * 1000; //мкс
+-// Одометрия считается и отправляется в ODOM_RATE_DIVIDER раз чаще ПИД:
+-// 100 мс / 5 = 20 мс (50 Гц). ПИД по-прежнему работает раз в 100 мс.
+-const uint8_t ODOM_RATE_DIVIDER = 5;
+-const unsigned long odom_timer_timeout = timer_timeout / ODOM_RATE_DIVIDER; //мкс
++// Контур скорости: 100 Гц. Оценка скорости использует реальные метки времени
++// фронтов, поэтому джиттер такта на неё не влияет.
++const unsigned long CONTROL_PERIOD_US = 10000; // мкс
++// Одометрия считается и публикуется на 50 Гц
++const unsigned long odom_timer_timeout = 20000; // мкс
+ // Аварийная остановка, если команды не приходят дольше 1 секунды
+ const unsigned int emergency_timer_timeout = 1000;
+ const unsigned int update_voltage_timer_timeout = 200;
+ 
++// === I2C ===
++// PCA9685 (ШИМ), INA219 и SSD1306 работают на 400 кГц. На 100 кГц обновление
++// дисплея 128x32 занимает ~50 мс и срывало бы такты контура 100 Гц.
++const uint32_t I2C_CLOCK_HZ = 400000;
++// Медленные операции I2C (дисплей, INA219, проверка устройств) выполняются только
++// если до следующего такта контура осталось не меньше этого времени, мкс.
++const unsigned long I2C_WINDOW_MIN_US = 4000;
++
++// === Телеметрия (команда $12) ===
++// Пока включена, одометрия ($1) не публикуется: канал занят телеметрией на 100 Гц.
++// Выключается сама, если команды не приходят дольше emergency_timer_timeout.
++const uint8_t TELEMETRY_DECIMATION = 1; // 1 = каждый такт контура (100 Гц)
++
+ 
+ #endif
+\ No newline at end of file
+diff -ruN fw_orig/esp32_firmware/display_manager.cpp fw_new/esp32_firmware/display_manager.cpp
+--- fw_orig/esp32_firmware/display_manager.cpp	2026-05-07 22:38:16.000000000 +0300
++++ fw_new/esp32_firmware/display_manager.cpp	2026-10-26 23:19:11.644003066 +0300
+@@ -25,7 +25,8 @@
+ }
+ 
+ void DisplayManager::update(const String& ssid, const String& ip, const String& password,
+-                            float busVoltage, float current, int batteryPercent) {
++                            float busVoltage, float current, int batteryPercent,
++                            bool allowBus) {
+   // Определяем, перешли ли мы в режим низкого заряда
+   bool low = (batteryPercent < 20);
+   if (low != _lowBatteryMode) {
+@@ -50,6 +51,27 @@
+       _render(ssid, ip, password, busVoltage, current, batteryPercent);
+     }
+   }
++
++  // Отправляем очередной кусок кадра, если шина свободна
++  if (_flushing && allowBus) {
++    _flushStep();
++  }
++}
++
++// Отправляет один кусок кадра: CHUNK_COLS столбцов одной страницы
++void DisplayManager::_flushStep() {
++  const int x0 = _flushCol;
++  const int x1 = x0 + CHUNK_COLS - 1;
++  const int y = _flushPage * 8;  // верхняя строка страницы
++  _oled.update(x0, y, x1, y);
++  _flushCol += CHUNK_COLS;
++  if (_flushCol >= 128) {
++    _flushCol = 0;
++    if (++_flushPage >= PAGES) {
++      _flushPage = 0;
++      _flushing = false;
++    }
++  }
+ }
+ 
+ // Приватная функция, выполняющая фактический вывод на дисплей
+@@ -95,5 +117,8 @@
+     _oled.println("A");
+   }
+ 
+-  _oled.update();
++  // Кадр готов в буфере; на дисплей он уходит по кускам из update()
++  _flushing = true;
++  _flushPage = 0;
++  _flushCol = 0;
+ }
+\ No newline at end of file
+diff -ruN fw_orig/esp32_firmware/display_manager.h fw_new/esp32_firmware/display_manager.h
+--- fw_orig/esp32_firmware/display_manager.h	2026-05-07 22:38:16.000000000 +0300
++++ fw_new/esp32_firmware/display_manager.h	2026-10-26 23:19:11.643697552 +0300
+@@ -18,8 +18,13 @@
+ 
+   // Обновляет содержимое экрана в соответствии с текущим состоянием батареи.
+   // Вызывайте в каждом цикле loop().
++  // Кадр рисуется в буфер (RAM, шину не занимает), а в дисплей уходит по кускам:
++  // не больше одного куска (CHUNK_COLS байт) за вызов, и только если allowBus = true.
++  // Так обновление экрана не растягивается на десятки миллисекунд и не срывает
++  // такты контура скорости: вызывающий разрешает шину, когда до такта далеко.
+   void update(const String& ssid, const String& ip, const String& password,
+-              float busVoltage, float current, int batteryPercent);
++              float busVoltage, float current, int batteryPercent,
++              bool allowBus = true);
+ 
+ private:
+   GyverOLED<SSD1306_128x32, OLED_BUFFER> _oled;
+@@ -30,6 +35,14 @@
+   bool _lowBatteryMode;
+   bool _showWarning;  // true = показывать предупреждение
+ 
++  // Порционная отправка кадра: 128x32 = 4 страницы по 128 столбцов
++  static const uint8_t CHUNK_COLS = 64;  // столбцов (байт) за один вызов; 64 байта ~ 1.7 мс на 400 кГц
++  static const uint8_t PAGES = 4;
++  bool _flushing = false;
++  uint8_t _flushPage = 0;
++  uint8_t _flushCol = 0;
++  void _flushStep();
++
+   // Отрисовка одной из двух страниц в зависимости от _showWarning
+   void _render(const String& ssid, const String& ip, const String& password,
+                float busVoltage, float current, int batteryPercent);
+diff -ruN fw_orig/esp32_firmware/encoders.cpp fw_new/esp32_firmware/encoders.cpp
+--- fw_orig/esp32_firmware/encoders.cpp	2026-10-25 20:56:37.000000000 +0300
++++ fw_new/esp32_firmware/encoders.cpp	2026-10-26 23:17:13.273218992 +0300
+@@ -3,6 +3,11 @@
+ 
+ volatile int32_t Encoders::_leftPos = 0;
+ volatile int32_t Encoders::_rightPos = 0;
++// Накопленная позиция (не обнуляется) и время последнего фронта - для оценки скорости
++volatile int32_t Encoders::_leftTotal = 0;
++volatile int32_t Encoders::_rightTotal = 0;
++volatile uint32_t Encoders::_leftLastUs = 0;
++volatile uint32_t Encoders::_rightLastUs = 0;
+ // Для прерываний (машины состояний)
+ volatile bool Encoders::_ReadPIN_R_A_A;
+ volatile bool Encoders::_ReadPIN_R_B_A;
+@@ -61,42 +66,77 @@
+   portEXIT_CRITICAL(&_mux);
+ }
+ 
+-// обработчики прерываний (код из вашего файла, адаптированный)
++// Позиция и время фронта читаются под одним замком: пара (total, lastUs)
++// всегда относится к одному и тому же фронту.
++void Encoders::snapshotLeft(int32_t &total, uint32_t &lastEdgeUs) {
++  portENTER_CRITICAL(&_mux);
++  total = _leftTotal;
++  lastEdgeUs = _leftLastUs;
++  portEXIT_CRITICAL(&_mux);
++}
++
++void Encoders::snapshotRight(int32_t &total, uint32_t &lastEdgeUs) {
++  portENTER_CRITICAL(&_mux);
++  total = _rightTotal;
++  lastEdgeUs = _rightLastUs;
++  portEXIT_CRITICAL(&_mux);
++}
++
++// Учёт одного фронта. Вызывается из прерывания внутри критической секции.
++void IRAM_ATTR Encoders::_countR(int8_t d) {
++  _rightPos += d;
++  _rightTotal += d;
++  _rightLastUs = micros();
++}
++
++void IRAM_ATTR Encoders::_countL(int8_t d) {
++  _leftPos += d;
++  _leftTotal += d;
++  _leftLastUs = micros();
++}
++
++// обработчики прерываний (код из вашего файла, адаптированный):
++// конечный автомат прежний, но вместо прямого изменения счётчика он
++// выдаёт шаг d = +1/-1, а учёт (позиция + время фронта) делает _countR/_countL.
+ void IRAM_ATTR Encoders::_readR_A() {
+   _ReadPIN_R_A_A = digitalRead(_PIN_R_A);
+   _ReadPIN_R_B_A = digitalRead(_PIN_R_B);
+-  portENTER_CRITICAL_ISR(&_mux);
++  int8_t d = 0;
+ 
+   switch (_ReadPIN_R_A_A) {
+     case 0:
+-      if (_ReadPIN_R_B_A == 1) {_rightPos += 1; break;}
+-      if (_ReadPIN_R_B_A == 0) {_rightPos -= 1; break;}
++      if (_ReadPIN_R_B_A == 1) {d = +1; break;}
++      if (_ReadPIN_R_B_A == 0) {d = -1; break;}
+       break;
+-    
++
+     case 1:
+-      if (_ReadPIN_R_B_A == 1) {_rightPos -= 1; break;}
+-      if (_ReadPIN_R_B_A == 0) {_rightPos += 1; break;}
++      if (_ReadPIN_R_B_A == 1) {d = -1; break;}
++      if (_ReadPIN_R_B_A == 0) {d = +1; break;}
+       break;
+   }
++  portENTER_CRITICAL_ISR(&_mux);
++  _countR(d);
+   portEXIT_CRITICAL_ISR(&_mux);
+ }
+ 
+ void IRAM_ATTR Encoders::_readR_B() {
+   _ReadPIN_R_A_B = digitalRead(_PIN_R_A);
+   _ReadPIN_R_B_B = digitalRead(_PIN_R_B);
+-  portENTER_CRITICAL_ISR(&_mux);
++  int8_t d = 0;
+ 
+   switch (_ReadPIN_R_B_B) {
+     case 0:
+-      if (_ReadPIN_R_A_B == 1) {_rightPos -= 1; break;}
+-      if (_ReadPIN_R_A_B == 0) {_rightPos += 1; break;}
++      if (_ReadPIN_R_A_B == 1) {d = -1; break;}
++      if (_ReadPIN_R_A_B == 0) {d = +1; break;}
+       break;
+-    
++
+     case 1:
+-      if (_ReadPIN_R_A_B == 1) {_rightPos += 1; break;}
+-      if (_ReadPIN_R_A_B == 0) {_rightPos -= 1; break;}
++      if (_ReadPIN_R_A_B == 1) {d = +1; break;}
++      if (_ReadPIN_R_A_B == 0) {d = -1; break;}
+       break;
+   }
++  portENTER_CRITICAL_ISR(&_mux);
++  _countR(d);
+   portEXIT_CRITICAL_ISR(&_mux);
+ }
+ 
+@@ -104,38 +144,42 @@
+ void IRAM_ATTR Encoders::_readL_A() {
+   _ReadPIN_L_A_A = digitalRead(_PIN_L_A);
+   _ReadPIN_L_B_A = digitalRead(_PIN_L_B);
+-  portENTER_CRITICAL_ISR(&_mux);
++  int8_t d = 0;
+ 
+   switch (_ReadPIN_L_A_A) {
+     case 0:
+-      if (_ReadPIN_L_B_A == 1) {_leftPos += 1; break;}
+-      if (_ReadPIN_L_B_A == 0) {_leftPos -= 1; break;}
++      if (_ReadPIN_L_B_A == 1) {d = +1; break;}
++      if (_ReadPIN_L_B_A == 0) {d = -1; break;}
+       break;
+-    
++
+     case 1:
+-      if (_ReadPIN_L_B_A == 1) {_leftPos -= 1; break;}
+-      if (_ReadPIN_L_B_A == 0) {_leftPos += 1; break;}
++      if (_ReadPIN_L_B_A == 1) {d = -1; break;}
++      if (_ReadPIN_L_B_A == 0) {d = +1; break;}
+       break;
+   }
++  portENTER_CRITICAL_ISR(&_mux);
++  _countL(d);
+   portEXIT_CRITICAL_ISR(&_mux);
+ }
+ 
+ void IRAM_ATTR Encoders::_readL_B() {
+   _ReadPIN_L_A_B = digitalRead(_PIN_L_A);
+   _ReadPIN_L_B_B = digitalRead(_PIN_L_B);
+-  portENTER_CRITICAL_ISR(&_mux);
++  int8_t d = 0;
+ 
+   switch (_ReadPIN_L_B_B) {
+     case 0:
+-      if (_ReadPIN_L_A_B == 1) {_leftPos -= 1; break;}
+-      if (_ReadPIN_L_A_B == 0) {_leftPos += 1; break;}
++      if (_ReadPIN_L_A_B == 1) {d = -1; break;}
++      if (_ReadPIN_L_A_B == 0) {d = +1; break;}
+       break;
+-    
++
+     case 1:
+-      if (_ReadPIN_L_A_B == 1) {_leftPos += 1; break;}
+-      if (_ReadPIN_L_A_B == 0) {_leftPos -= 1; break;}
++      if (_ReadPIN_L_A_B == 1) {d = +1; break;}
++      if (_ReadPIN_L_A_B == 0) {d = -1; break;}
+       break;
+   }
++  portENTER_CRITICAL_ISR(&_mux);
++  _countL(d);
+   portEXIT_CRITICAL_ISR(&_mux);
+ }
+ 
+diff -ruN fw_orig/esp32_firmware/encoders.h fw_new/esp32_firmware/encoders.h
+--- fw_orig/esp32_firmware/encoders.h	2026-10-25 20:56:37.000000000 +0300
++++ fw_new/esp32_firmware/encoders.h	2026-10-26 23:16:58.101219339 +0300
+@@ -8,13 +8,24 @@
+ class Encoders {
+ public:
+   static bool begin(int PIN_R_A, int PIN_R_B, int PIN_L_A, int PIN_L_B);
++  // Счётчики для одометрии: чтение с обнулением
+   static int32_t getLeftAndReset();
+   static int32_t getRightAndReset();
+   static void reset();
+ 
++  // Снимок для оценки скорости (speed_estimator.h): накопленная позиция (фронтов,
++  // никогда не обнуляется) и время последнего фронта, мкс. Обе величины читаются
++  // атомарно, поэтому относятся к одному и тому же фронту.
++  static void snapshotLeft(int32_t &total, uint32_t &lastEdgeUs);
++  static void snapshotRight(int32_t &total, uint32_t &lastEdgeUs);
++
+ private:
+   static volatile int32_t _leftPos;
+   static volatile int32_t _rightPos;
++  static volatile int32_t _leftTotal;
++  static volatile int32_t _rightTotal;
++  static volatile uint32_t _leftLastUs;
++  static volatile uint32_t _rightLastUs;
+   static volatile bool _ReadPIN_L_A_A;
+   static volatile bool _ReadPIN_L_A_B;
+   static volatile bool _ReadPIN_L_B_A;
+@@ -34,6 +45,9 @@
+   static void IRAM_ATTR _readR_B();
+   static void IRAM_ATTR _readL_A();
+   static void IRAM_ATTR _readL_B();
++  // Учёт одного фронта: шаг d = +1/-1 из конечного автомата
++  static void IRAM_ATTR _countR(int8_t d);
++  static void IRAM_ATTR _countL(int8_t d);
+ };
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_firmware.ino
+--- fw_orig/esp32_firmware/esp32_firmware.ino	2026-10-25 22:12:19.000000000 +0300
++++ fw_new/esp32_firmware/esp32_firmware.ino	2026-10-26 23:28:15.298238064 +0300
+@@ -5,9 +5,9 @@
+ /**
+   @author Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
+   @date 25.10.2026
+-  @version 2.2.0
++  @version 2.3.0
+ */
+-const char *VERSION = "2.2.0";
++const char *VERSION = "2.3.0";
+ 
+ #include <Arduino.h>
+ #include <math.h>
+@@ -25,6 +25,7 @@
+ #include "display_manager.h"
+ #include "serial_receiver.h"
+ #include "odometry.h"
++#include "speed_estimator.h"
+ 
+ Encoders encoders;
+ ErrorManager error_manager;
+@@ -33,7 +34,10 @@
+                            KP_R, KI_R, KD_R);
+ 
+ INA219 INA(0x41);
+-FlashStorageManager flashStorage("Memory1");
++// Пространство имён NVS изменено с "Memory1" на "Memory2": коэффициенты ПИД, сохранённые
++// прежней прошивкой (под контур 10 Гц), в новом контуре не годятся. Чтобы вернуть старые
++// значения, верните "Memory1" (они лежат во flash нетронутыми).
++FlashStorageManager flashStorage("Memory2");
+ DisplayManager display(update_voltage_timer_timeout); // 200 мс интервал обновления
+ SerialReceiver mainReceiver(Serial);                  // основной канал (USB)
+ SerialReceiver jetsonReceiver(Serial1);               // Jetson Nano
+@@ -52,17 +56,24 @@
+ 
+ // Для таймеров
+ unsigned long odom_tmr = 0;   // момент последнего расчёта одометрии, мкс
++unsigned long control_next_us = 0; // момент следующего такта контура скорости, мкс
+ unsigned long emergency_timer = 0;
+ uint64_t update_timer;
+ 
+-// Одометрия (50 Гц) и накопители тиков для ПИД (10 Гц)
++// Одометрия (50 Гц): считается по тикам энкодеров, как и раньше
+ DiffDriveOdometry odometry(WHEEL_BASE);
+-uint8_t odom_counter = 0;        // сколько периодов одометрии прошло с последнего ПИД
+-int32_t pid_left_ticks = 0;      // тики за текущий период ПИД
+-int32_t pid_right_ticks = 0;
+-unsigned long pid_delta = 0;     // длительность текущего периода ПИД, мкс
+ 
+-// Скорости для отправки на Jetson: обновляются раз в период ПИД
++// Оценка скорости колёс по фронтам (M/T-метод), по одному оценщику на колесо
++const MTSpeedParams SPEED_PARAMS = {1.0f / ENC_EDGES_PER_REV, SPEED_TIMEOUT_US,
++                                    SPEED_MIN_EDGES, SPEED_MAX_SANE_REV_S, SPEED_FILTER_K};
++MTSpeedEstimator speedR(SPEED_PARAMS);
++MTSpeedEstimator speedL(SPEED_PARAMS);
++
++// Телеметрия контура скорости ($12): включается командой, гаснет без связи
++bool telemetry_on = false;
++uint8_t telemetry_div = 0;
++
++// Скорости для отправки на Jetson: обновляются на каждом такте контура (100 Гц)
+ float linear_vel_ = 0.0;
+ float angular_vel_ = 0.0;
+ float left_vel_ = 0.0;
+@@ -93,6 +104,8 @@
+ 
+ void checkI2CDevices()
+ {
++  bool reinitDone = false; // после переинициализации Wire.begin() мог сбросить частоту шины
++
+   // -------- INA219 (0x41) --------
+   bool inaResponds = i2cProbe(0x41);
+   if (inaResponds)
+@@ -115,6 +128,7 @@
+       {
+         inaOk = true;
+         inaErrors = 0;
++        reinitDone = true;
+         Serial.println("INA219 reinitialized");
+       }
+       else
+@@ -146,6 +160,7 @@
+       {
+         pwmOk = true;
+         pwmErrors = 0;
++        reinitDone = true;
+         // Восстанавливаем управление моторами
+         controller.setTargetVelocity(0.0, 0.0);
+         // Но update() заново рассчитает ПИД и запишет моторы, что нам и нужно
+@@ -179,6 +194,7 @@
+       {
+         oledOk = true;
+         oledErrors = 0;
++        reinitDone = true;
+         Serial.println("OLED reinitialized");
+       }
+       else
+@@ -188,6 +204,9 @@
+       }
+     }
+   }
++
++  if (reinitDone)
++    Wire.setClock(I2C_CLOCK_HZ);
+ }
+ 
+ void parseJetsonMessage(const char *fullMessage)
+@@ -231,11 +250,11 @@
+ */
+ float convert_ticks_to_freq(long ticks, long timeout_micros, char dir)
+ {
+-  const float steps_per_tick = 1.0 / 4.0;  // 4 импульса на 1 шаг
+-  const float turn_per_step = 1.0 / 270.0; // 270 шагов в 1 полном обороте
++  // 4 импульса на 1 шаг, 270 шагов на оборот (ENC_EDGES_PER_REV из config.h)
++  const float turn_per_tick = 1.0 / ENC_EDGES_PER_REV;
+   const double micros_to_sec = 1.0 / 1000000.0;
+   float timeout_sec = timeout_micros * micros_to_sec;
+-  float result = turn_per_step * steps_per_tick * ticks / timeout_sec;
++  float result = turn_per_tick * ticks / timeout_sec;
+ 
+   // для левого колеса инвертируем частоту
+   if (dir == 'l')
+@@ -262,6 +281,54 @@
+   return turns * 2 * Pi * WHEEL_RADIUS;
+ }
+ 
++/**
++ * @brief Можно ли сейчас занимать шину I2C медленной операцией (дисплей, INA219,
++ * проверка устройств). Да, если до следующего такта контура осталось достаточно
++ * времени: PCA9685 с моторами сидит на той же шине, и такт нельзя задерживать.
++ */
++bool i2cWindowOpen()
++{
++  return (long)(control_next_us - micros()) > (long)I2C_WINDOW_MIN_US;
++}
++
++/**
++ * @brief Один такт контура скорости (100 Гц): оценка скорости колёс по фронтам
++ * энкодеров и обновление регуляторов (feedforward + ПИ).
++ */
++void controlStep()
++{
++  // Снимок (позиция, время последнего фронта) для каждого колеса, затем время "сейчас":
++  // возраст последнего фронта получается неотрицательным
++  int32_t posR, posL;
++  uint32_t lastR, lastL;
++  encoders.snapshotRight(posR, lastR);
++  encoders.snapshotLeft(posL, lastL);
++  const uint32_t now = micros();
++
++  // об/с -> м/с; знак колеса приводится так, чтобы вперёд было > 0 у обоих
++  const float revR = ENC_SIGN_R * speedR.update(posR, lastR, now);
++  const float revL = ENC_SIGN_L * speedL.update(posL, lastL, now);
++  const float rightLinVel = revR * 2 * Pi * WHEEL_RADIUS;
++  const float leftLinVel = revL * 2 * Pi * WHEEL_RADIUS;
++
++  // Регуляторы выдают сигнал на моторы
++  controller.update(leftLinVel, rightLinVel);
++
++  // Скорости для отправки на Jetson
++  right_vel_ = controller.getFilteredRight();
++  left_vel_ = controller.getFilteredLeft();
++  linear_vel_ = (right_vel_ + left_vel_) / 2.0;
++  angular_vel_ = (right_vel_ - left_vel_) / WHEEL_BASE; // для дифференциального привода
++
++  if (telemetry_on && ++telemetry_div >= TELEMETRY_DECIMATION)
++  {
++    telemetry_div = 0;
++    telemetryPublish(now,
++                     controller.getTargetLeft(), left_vel_, controller.getOutputLeft(),
++                     controller.getTargetRight(), right_vel_, controller.getOutputRight());
++  }
++}
++
+ void setup()
+ {
+ 
+@@ -273,6 +340,7 @@
+ 
+   error_manager.check_exec(Wire.begin(), "Error! Failed to init I2C bus.");
+   Wire.setTimeOut(50); // 50 мс таймаут на транзакцию
++  Wire.setClock(I2C_CLOCK_HZ);
+ 
+   error_manager.soft_check_exec(i2cProbe(0x3C), "Warning! OLED-display is unaviable through I2C bus");
+   error_manager.soft_check_exec(i2cProbe(0x41), "Warning! INA219 sensor is unaviable through I2C bus");
+@@ -284,6 +352,7 @@
+   error_manager.check_exec(INA.begin(), "Error! Failed to init INA219 module.");
+ 
+   error_manager.check_exec(display.begin((char *)VERSION), "Error! OLED init failed.");
++  Wire.setClock(I2C_CLOCK_HZ); // display.begin() вызывает Wire.begin() ещё раз
+ 
+   delay(100);
+ 
+@@ -291,12 +360,19 @@
+   flashStorage.loadPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
+   controller.setPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
+ 
++  // Feedforward: значения из config.h, если калибровка ещё не сохранялась во flash
++  flashStorage.loadFF(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
++  controller.setFeedforward(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
++
+   controller.setWheelSpeeds(0.0, 0.0);
+ 
+   emergency_timer = millis();
+-  // Отсчёт одометрии и ПИД с конца инициализации, а не с включения питания
++  // Отсчёт одометрии и контура скорости с конца инициализации, а не с включения питания
+   encoders.reset();
++  speedL.reset();
++  speedR.reset();
+   odom_tmr = micros();
++  control_next_us = micros() + CONTROL_PERIOD_US;
+ }
+ 
+ void loop()
+@@ -306,13 +382,32 @@
+   mainReceiver.update();
+   jetsonReceiver.update();
+ 
+-  if ((millis() - emergency_timer > emergency_timer_timeout) || (bus_voltage < min_voltage))
++  const bool host_silent = (millis() - emergency_timer > emergency_timer_timeout);
++  if (host_silent || (bus_voltage < min_voltage))
+   {
+-    // Аварийная остановка
++    // Аварийная остановка (возвращает и замкнутый режим, если шёл эксперимент $10)
+     controller.setWheelSpeeds(0.0, 0.0);
+   }
++  if (host_silent)
++  {
++    telemetry_on = false; // нет связи: канал нужен одометрии
++  }
+ 
+   unsigned long now = micros();
++
++  // Контур скорости: каждые CONTROL_PERIOD_US (10 мс, 100 Гц)
++  if ((long)(now - control_next_us) >= 0)
++  {
++    control_next_us += CONTROL_PERIOD_US;
++    if ((long)(now - control_next_us) >= 0)
++    {
++      // Опоздали больше чем на период (долгая операция): пропущенные такты не догоняем
++      control_next_us = now + CONTROL_PERIOD_US;
++    }
++    controlStep();
++    now = micros();
++  }
++
+   unsigned long odom_delta = now - odom_tmr;
+ 
+   // Одометрия: каждые odom_timer_timeout (20 мс, 50 Гц)
+@@ -328,38 +423,14 @@
+     odometry.update(convert_ticks_to_distance(leftTicks, 'l'),
+                     convert_ticks_to_distance(rightTicks, 'r'));
+ 
+-    // 3. Тики копятся для ПИД: регулятор работает раз в ODOM_RATE_DIVIDER
+-    //    периодов (100 мс), как и раньше - под этот период подобраны коэффициенты
+-    pid_left_ticks += leftTicks;
+-    pid_right_ticks += rightTicks;
+-    pid_delta += odom_delta;
+-
+-    if (++odom_counter >= ODOM_RATE_DIVIDER)
++    // 3. Публикация одометрии (50 Гц). Скорости колёс берутся из контура скорости
++    //    (right_vel_ и др. обновляются на каждом его такте). Пока включена
++    //    телеметрия, канал отдан ей, и одометрия не публикуется.
++    if (!telemetry_on)
+     {
+-      // 3.1. Тики за период ПИД -> частота вращения (об/с) -> скорость колеса (м/с)
+-      float rightFreq = convert_ticks_to_freq(pid_right_ticks, pid_delta, 'r');
+-      float leftFreq = convert_ticks_to_freq(pid_left_ticks, pid_delta, 'l');
+-      float rightLinVel = rightFreq * 2 * Pi * WHEEL_RADIUS;
+-      float leftLinVel = leftFreq * 2 * Pi * WHEEL_RADIUS;
+-
+-      // 3.2. Обновляем ПИД-регуляторы и выдаём сигнал на моторы
+-      controller.update(leftLinVel, rightLinVel);
+-
+-      // 3.3. Сглаженные скорости для отправки на Jetson
+-      right_vel_ = controller.getFilteredRight();
+-      left_vel_ = controller.getFilteredLeft();
+-      linear_vel_ = (right_vel_ + left_vel_) / 2.0;
+-      angular_vel_ = (right_vel_ - left_vel_) / WHEEL_BASE; // для дифференциального привода
+-
+-      odom_counter = 0;
+-      pid_left_ticks = 0;
+-      pid_right_ticks = 0;
+-      pid_delta = 0;
++      odomPublish(odometry.x(), odometry.y(), odometry.heading(),
++                  linear_vel_, angular_vel_, left_vel_, right_vel_);
+     }
+-
+-    // 4. Публикация одометрии (50 Гц)
+-    odomPublish(odometry.x(), odometry.y(), odometry.heading(),
+-                linear_vel_, angular_vel_, left_vel_, right_vel_);
+   }
+ 
+   // Обработка входного значения
+@@ -412,6 +483,39 @@
+       regulatorsCoefficientsPublish(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
+       break;
+ 
++    case Command::SET_DUTY:
++      // Разомкнутый режим для калибровки: шлите не реже раза в секунду,
++      // иначе сработает аварийная остановка
++      if (cmd.count >= 2 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]))
++        controller.setOpenLoop(cmd.args[0], cmd.args[1]);
++      break;
++
++    case Command::SET_FF:
++      if (cmd.count >= 4 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]) &&
++          isfinite(cmd.args[2]) && isfinite(cmd.args[3]))
++      {
++        FF_GAIN_L = constrain(cmd.args[0], 0.0f, 20.0f);
++        FF_DEADZONE_L = constrain(cmd.args[1], 0.0f, 0.9f);
++        FF_GAIN_R = constrain(cmd.args[2], 0.0f, 20.0f);
++        FF_DEADZONE_R = constrain(cmd.args[3], 0.0f, 0.9f);
++        controller.setFeedforward(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
++        if (cmd.count >= 5 && cmd.args[4] >= 0.5f)
++          flashStorage.saveFF(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
++      }
++      break;
++
++    case Command::SET_TELEMETRY:
++      if (cmd.count >= 1)
++      {
++        telemetry_on = (cmd.args[0] >= 0.5f);
++        telemetry_div = 0;
++      }
++      break;
++
++    case Command::REQUEST_FF:
++      feedforwardPublish(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
++      break;
++
+     case Command::UNKNOWN:
+       break;
+     }
+@@ -424,7 +528,8 @@
+     parseJetsonMessage(raw_1);
+   }
+ 
+-  if ((millis() - update_timer >= update_voltage_timer_timeout) && inaOk)
++  // Медленные операции I2C - только в свободном окне между тактами контура
++  if ((millis() - update_timer >= update_voltage_timer_timeout) && inaOk && i2cWindowOpen())
+   {
+     update_timer = millis();
+     // Чтение напряжения и тока
+@@ -434,16 +539,16 @@
+     current = shunt_v / 0.1 / 1000;
+   }
+   // Мониторинг устройств I2C (не чаще 2 секунд)
+-  if (millis() - lastI2CCheck >= I2C_CHECK_INTERVAL)
++  if ((millis() - lastI2CCheck >= I2C_CHECK_INTERVAL) && i2cWindowOpen())
+   {
+     lastI2CCheck = millis();
+     checkI2CDevices();
+   }
+ 
+-  // Обновление дисплея (само проверяет интервал)
++  // Обновление дисплея (само проверяет интервал; кадр уходит по кускам, когда шина свободна)
+   if (oledOk)
+   {
+-    display.update(wifi_ssid, wifi_ip, wifi_password, bus_voltage, current, pros);
++    display.update(wifi_ssid, wifi_ip, wifi_password, bus_voltage, current, pros, i2cWindowOpen());
+   }
+ 
+   // Индикация ошибок во время работы: светодиод часто мигает, пока
+diff -ruN fw_orig/esp32_firmware/flash_storage.cpp fw_new/esp32_firmware/flash_storage.cpp
+--- fw_orig/esp32_firmware/flash_storage.cpp	2026-05-07 00:36:32.000000000 +0300
++++ fw_new/esp32_firmware/flash_storage.cpp	2026-10-26 23:18:53.549216698 +0300
+@@ -59,4 +59,25 @@
+     _prefs.putFloat("Kd_L", Kd_L);
+     // nvsInit не трогаем – он уже есть после первого begin()
+     _prefs.end();
++}
++
++void FlashStorageManager::loadFF(float &gainL, float &deadzoneL,
++                                 float &gainR, float &deadzoneR) {
++    _prefs.begin(_namespace, true);
++    // Второй аргумент - значение, если ключа нет (прошивка обновлена, калибровки ещё не было)
++    gainL = _prefs.getFloat("Kff_L", gainL);
++    deadzoneL = _prefs.getFloat("Dz_L", deadzoneL);
++    gainR = _prefs.getFloat("Kff_R", gainR);
++    deadzoneR = _prefs.getFloat("Dz_R", deadzoneR);
++    _prefs.end();
++}
++
++void FlashStorageManager::saveFF(float gainL, float deadzoneL,
++                                 float gainR, float deadzoneR) {
++    _prefs.begin(_namespace, false);
++    _prefs.putFloat("Kff_L", gainL);
++    _prefs.putFloat("Dz_L", deadzoneL);
++    _prefs.putFloat("Kff_R", gainR);
++    _prefs.putFloat("Dz_R", deadzoneR);
++    _prefs.end();
+ }
+\ No newline at end of file
+diff -ruN fw_orig/esp32_firmware/flash_storage.h fw_new/esp32_firmware/flash_storage.h
+--- fw_orig/esp32_firmware/flash_storage.h	2026-05-06 18:57:43.000000000 +0300
++++ fw_new/esp32_firmware/flash_storage.h	2026-10-26 23:18:50.069216778 +0300
+@@ -34,6 +34,18 @@
+                  float Kp_R, float Ki_R, float Kd_R);
+ 
+     /**
++     * Загружает параметры feedforward (u_ff = sign(v) * (deadzone + gain * |v|)).
++     * Если в NVS их ещё нет (прошивка обновлена поверх старой), остаются значения,
++     * с которыми переменные были переданы (заводские из config.h).
++     */
++    void loadFF(float &gainL, float &deadzoneL, float &gainR, float &deadzoneR);
++
++    /**
++     * Сохраняет параметры feedforward в NVS.
++     */
++    void saveFF(float gainL, float deadzoneL, float gainR, float deadzoneR);
++
++    /**
+      * Проверяет, был ли уже выполнен первый запуск (наличие флага nvsInit).
+      */
+     bool isInitialized();
+diff -ruN fw_orig/esp32_firmware/motor_controller.cpp fw_new/esp32_firmware/motor_controller.cpp
+--- fw_orig/esp32_firmware/motor_controller.cpp	2026-10-25 22:12:19.000000000 +0300
++++ fw_new/esp32_firmware/motor_controller.cpp	2026-10-27 01:25:34.217029384 +0300
+@@ -8,8 +8,10 @@
+                                  bool invertLeft, bool invertRight)
+   : _pwm(0x60)  // адрес PCA9685 по умолчанию
+     ,
+-    _pidL(I_SATURATE),
+-    _pidR(I_SATURATE),
++    // I_SATURATE - условное интегрирование (антивиндап), D_INPUT - производная по
++    // измерению, а не по ошибке: скачок уставки не даёт удара
++    _pidL(I_SATURATE | D_INPUT),
++    _pidR(I_SATURATE | D_INPUT),
+     _wheelBase(wheelBase),
+     _maxWheelSpeed(maxWheelSpeed),
+     _dt(dt),
+@@ -17,10 +19,18 @@
+     _kpR(kpR), _kiR(kiR), _kdR(kdR),
+     _targetLeft(0.0f), _targetRight(0.0f),
+     _outputLeft(0.0f), _outputRight(0.0f),
++    _measLeft(0.0f), _measRight(0.0f),
++    _ffGainL(0.0f), _ffDzL(0.0f), _ffGainR(0.0f), _ffDzR(0.0f),
++    _openLoop(false), _openDutyL(0.0f), _openDutyR(0.0f),
++    _prevSignL(0), _prevSignR(0),
++    _prevRefL(0), _prevRefR(0), _frozenL(0), _frozenR(0),
+     _leftChannel(leftChannel), _rightChannel(rightChannel),
+-    _invertLeft(invertLeft), _invertRight(invertRight), _deathLine(0.35f)
++    _invertLeft(invertLeft), _invertRight(invertRight), _minDuty(0.02f)
+ 
+-{}
++{
++  _lastDir[0] = 2;
++  _lastDir[1] = 2;
++}
+ 
+ bool MotorController::begin() {
+   delay(10);
+@@ -42,6 +52,8 @@
+   _pidR.outMax = 1.0;
+   _pidR.outMin = -1.0;
+ 
++  _lastDir[0] = 2;
++  _lastDir[1] = 2;
+   return true;
+ }
+ 
+@@ -50,6 +62,8 @@
+     _pwm.setPWMFreq(1000);
+     delay(1);
+     // После сброса PCA9685 все каналы выключены, так что безопасно
++    _lastDir[0] = 2;  // состояние каналов неизвестно: следующая запись выключит обе стороны моста
++    _lastDir[1] = 2;
+     return true;
+ }
+ void MotorController::setTargetVelocity(float linear, float angular) {
+@@ -66,8 +80,7 @@
+   _pidL.setpoint = _targetLeft;
+   _pidR.setpoint = _targetRight;
+ 
+-  _filterLeft.reset();
+-  _filterRight.reset();
++  _openLoop = false;
+ }
+ 
+ 
+@@ -80,21 +93,114 @@
+   _pidL.setpoint = _targetLeft;
+   _pidR.setpoint = _targetRight;
+ 
+-  _filterLeft.reset();
+-  _filterRight.reset();
++  _openLoop = false;
++}
++
++void MotorController::setOpenLoop(float dutyLeft, float dutyRight) {
++  _openDutyL = _cutValue(-1.0f, 1.0f, dutyLeft);
++  _openDutyR = _cutValue(-1.0f, 1.0f, dutyRight);
++  // Регуляторы выключены: уставки и интеграторы обнуляем, чтобы при возврате
++  // в замкнутый режим не осталось старого состояния
++  _targetLeft = 0.0f;
++  _targetRight = 0.0f;
++  _pidL.setpoint = 0.0f;
++  _pidR.setpoint = 0.0f;
++  _pidL.integral = 0.0f;
++  _pidR.integral = 0.0f;
++  _prevSignL = 0;
++  _prevSignR = 0;
++  _prevRefL = _prevRefR = 0.0f;
++  _frozenL = _frozenR = 0;
++  _openLoop = true;
++}
++
++void MotorController::setFeedforward(float gainL, float deadzoneL, float gainR, float deadzoneR) {
++  _ffGainL = gainL;
++  _ffDzL = deadzoneL;
++  _ffGainR = gainR;
++  _ffDzR = deadzoneR;
++}
++
++// Уставка по модулю ниже этого, м/с, считается нулём: мотор выключен, интегратор сброшен
++static const float SETPOINT_ZERO_EPS = 0.002f;
++// Заморозка интеграла при разгоне: пока колесо едет к уставке и ошибка больше этой доли
++// уставки, интегральная часть ПИ не копится (иначе она набирается за время разгона и даёт
++// перерегулирование 20-30%). Заморозка ограничена по времени (INT_FREEZE_MAX_TICKS тактов после
++// ступеньки уставки): под нагрузкой feedforward из калибровки "в воздухе" занижен, колесо
++// не доходит до уставки, и без ограничения интеграл не исправил бы ошибку никогда.
++// INT_FREEZE_BAND = 10 выключает заморозку совсем.
++static const float INT_FREEZE_BAND = 0.10f;
++static const int16_t INT_FREEZE_MAX_TICKS = 30;   // 300 мс при 100 Гц: порядка Tm колеса
++// Ступенька уставки: изменение больше этой доли уставки (плавный разгон по cmd_vel не считается)
++static const float SETPOINT_STEP_REL = 0.2f;
++// Подъём скважности до страгивания: пока колесо стоит, а уставка не нулевая, интегральная часть
++// растёт со скоростью STUCK_RAMP_RATE (скважность в секунду) независимо от малой ошибки.
++// Иначе на уставке 0.05 об/с интеграл (Ki * ошибка 0.01 м/с = 0.06-0.1 скважности в секунду)
++// набирает трение покоя секунды; под нагрузкой на полу страгивание вообще за 0.4 ШИМ.
++// 0 выключает.
++static const float STUCK_RAMP_RATE = 0.3f;
++
++float MotorController::_wheelStep(uPID &pid, float meas, float gain, float deadzone, int8_t &prevSign,
++                                  float &prevRef, int16_t &frozenTicks) {
++  const float r = pid.setpoint;
++  const int8_t sign = (r > SETPOINT_ZERO_EPS) ? 1 : ((r < -SETPOINT_ZERO_EPS) ? -1 : 0);
++
++  // Начало движения или реверс: интеграл прошлого направления не нужен
++  if (sign != prevSign) pid.integral = 0.0f;
++  prevSign = sign;
++
++  // Ступенька уставки: заморозке интеграла даётся новое окно времени
++  if (fabsf(r - prevRef) > SETPOINT_STEP_REL * fabsf(r) + 0.005f) frozenTicks = 0;
++  prevRef = r;
++
++  // Feedforward: сразу выдаёт основную часть управления, ПИ добирает остаток
++  const float ff = (sign == 0) ? 0.0f : (float)sign * (deadzone + gain * fabsf(r));
++
++  // Пределы ПИ сдвинуты так, чтобы сумма ff + ПИ не выходила за [-1, 1]:
++  // тогда условное интегрирование uPID видит насыщение полного сигнала
++  pid.outMax = 1.0f - ff;
++  pid.outMin = -1.0f - ff;
++
++  // Вызываем и в покое: так внутреннее состояние (прошлое измерение для D) не устаревает.
++  // Разгон/торможение к уставке: пока колесо едет и ещё не дошло до уставки (ошибка того же
++  // знака, что и уставка, и больше полосы INT_FREEZE_BAND), интеграл не копится. Feedforward уже
++  // выдаёт нужное установившееся управление; интеграл, набранный за время разгона, не нужен
++  // и давал бы перерегулирование. Стоящее колесо (трогание) и перелёт (ошибка другого знака)
++  // интегрируют как обычно: иначе нечем преодолеть трение покоя и снять перелёт.
++  const float integralBefore = pid.integral;
++  const float err = r - meas;
++  const float absR = fabsf(r);
++  const bool moving = fabsf(meas) > 0.1f * absR;
++  const bool approaching = (err * (float)sign) > 0.0f && fabsf(err) > INT_FREEZE_BAND * absR;
++  const float pi = pid.compute(meas);
++  if (moving && approaching && frozenTicks < INT_FREEZE_MAX_TICKS) {
++    pid.integral = integralBefore;
++    ++frozenTicks;
++  }
++
++  // Колесо стоит, а уставка есть: поднимаем скважность, пока оно не тронется
++  if (sign != 0 && !moving && STUCK_RAMP_RATE > 0.0f && pid.Ki > 0.01f) {
++    pid.integral += (float)sign * STUCK_RAMP_RATE * (_dt * 0.001f) / pid.Ki;
++  }
++
++  if (sign == 0) {
++    pid.integral = 0.0f;
++    return 0.0f;
++  }
++  return _cutValue(-1.0f, 1.0f, ff + pi);
+ }
+ 
+ void MotorController::update(float currentLeftSpeed, float currentRightSpeed) {
+-  // Подаём сырые скорости на фильтры
+-  _filterLeft.add(currentLeftSpeed);
+-  _filterRight.add(currentRightSpeed);
+-
+-  // ПИД получает сглаженные значения
+-  _filteredLeft = _filterLeft.getAverage();
+-  _filteredRight = _filterRight.getAverage();
++  _measLeft = currentLeftSpeed;
++  _measRight = currentRightSpeed;
+ 
+-  _outputLeft = _pidL.compute(_filteredLeft); // м/с
+-  _outputRight = _pidR.compute(_filteredRight); // м/с
++  if (_openLoop) {
++    _outputLeft = _openDutyL;
++    _outputRight = _openDutyR;
++  } else {
++    _outputLeft = _wheelStep(_pidL, _measLeft, _ffGainL, _ffDzL, _prevSignL, _prevRefL, _frozenL);
++    _outputRight = _wheelStep(_pidR, _measRight, _ffGainR, _ffDzR, _prevSignR, _prevRefR, _frozenR);
++  }
+ 
+   _motorWrite(_leftChannel, _outputLeft);
+   _motorWrite(_rightChannel, _outputRight);
+@@ -113,34 +219,40 @@
+ 
+ }
+ 
+-float MotorController::_mapFloat(float value, float fromLow, float fromHigh,
+-                                 float toLow, float toHigh) {
+-  float clamped = value;
+-  if (value < fromLow) clamped = fromLow;
+-  else if (value > fromHigh) clamped = fromHigh;
+-
+-  return (clamped - fromLow) * (toHigh - toLow) / (fromHigh - fromLow) + toLow;
+-}
+-
+ void MotorController::_motorWrite(uint8_t channel, float speed) {
+   // Применяем инверсию, если нужно
+   float s = speed;
+   if (channel == _leftChannel && _invertLeft) s = -s;
+   if (channel == _rightChannel && _invertRight) s = -s;
++  const uint8_t idx = (channel == _leftChannel) ? 0 : 1;
+ 
++  // Мёртвой зоны здесь больше нет: её компенсирует feedforward. Отсекается только
++  // скважность ниже _minDuty, чтобы не пищать и не греть мотор впустую.
++  int8_t dir = 0;
+   int16_t pwmValue = 0;
+-  if ((s > 0) && (s > _deathLine)) {
+-    pwmValue = (int16_t)(s * 4095);
+-    _pwm.setPin(channel + 1, 0, false);  // канал назад в 0
++  if (s > _minDuty) {
++    dir = 1;
++    pwmValue = (int16_t)(fminf(s, 1.0f) * 4095);
++  } else if (s < -_minDuty) {
++    dir = -1;
++    pwmValue = (int16_t)(fminf(-s, 1.0f) * 4095);
++  }
++
++  // На такте пишем один регистр, а вторую сторону моста выключаем только при смене
++  // направления: на шине I2C меньше транзакций (контур теперь 100 Гц, а не 10 Гц)
++  if (dir == 0) {
++    if (_lastDir[idx] != 0) {
++      _pwm.setPin(channel, 0, false);
++      _pwm.setPin(channel + 1, 0, false);
++    }
++  } else if (dir > 0) {
++    if (_lastDir[idx] != 1) _pwm.setPin(channel + 1, 0, false);  // канал назад в 0
+     _pwm.setPin(channel, pwmValue, false);
+-  } else if ((s < 0) && (s < -_deathLine)) {
+-    pwmValue = (int16_t)(-s * 4095);
+-    _pwm.setPin(channel, 0, false);  // канал вперёд в 0
+-    _pwm.setPin(channel + 1, pwmValue, false);
+   } else {
+-    _pwm.setPin(channel, 0, false);
+-    _pwm.setPin(channel + 1, 0, false);
++    if (_lastDir[idx] != -1) _pwm.setPin(channel, 0, false);  // канал вперёд в 0
++    _pwm.setPin(channel + 1, pwmValue, false);
+   }
++  _lastDir[idx] = dir;
+ }
+ 
+ float_t MotorController::_cutValue(float_t min, float_t max, float_t value) {
+@@ -151,4 +263,4 @@
+   } else {
+     return value;
+   }
+-}
+\ No newline at end of file
++}
+diff -ruN fw_orig/esp32_firmware/motor_controller.h fw_new/esp32_firmware/motor_controller.h
+--- fw_orig/esp32_firmware/motor_controller.h	2026-05-07 22:38:16.000000000 +0300
++++ fw_new/esp32_firmware/motor_controller.h	2026-10-27 01:25:34.220559362 +0300
+@@ -5,7 +5,6 @@
+ #include <Arduino.h>
+ #include <Adafruit_PWMServoDriver.h>
+ #include <uPID.h>
+-#include "filter.h"
+ 
+ class MotorController {
+ public:
+@@ -13,7 +12,7 @@
+      * Конструктор
+      * @param wheelBase      - длина базы робота (l), м
+      * @param maxWheelSpeed  - максимальная скорость колеса (max_vel), м/с
+-     * @param dt             - период дискретизации ПИД-регуляторов, с
++     * @param dt             - период дискретизации ПИ-регуляторов, мс
+      * @param kpL, kiL, kdL  - коэффициенты ПИД для левого колеса
+      * @param kpR, kiR, kdR  - коэффициенты ПИД для правого колеса
+      * @param leftChannel    - базовый канал PCA9685 для левого мотора (по умолч. 0x00)
+@@ -38,10 +37,21 @@
+     // Прямая установка скоростей колёс (м/с)
+     void setWheelSpeeds(float left, float right);
+ 
++    // Разомкнутый режим для экспериментов: скважность ШИМ каждого колеса, [-1, 1]
++    // (+ = колесо вперёд). Регуляторы отключены. Любая команда скорости
++    // (setWheelSpeeds / setTargetVelocity, в том числе аварийная остановка)
++    // возвращает замкнутый режим.
++    void setOpenLoop(float dutyLeft, float dutyRight);
++    bool isOpenLoop() const { return _openLoop; }
++
++    // Feedforward: u_ff = sign(v) * (deadzone + gain * |v|), скважность ШИМ
++    // gain - скважность на 1 м/с, deadzone - скважность, с которой колесо трогается
++    void setFeedforward(float gainL, float deadzoneL, float gainR, float deadzoneR);
++
+     /**
+-     * Обновление регуляторов (вызывать строго по таймеру dt)
+-     * @param currentLeftSpeed   - текущая скорость левого колеса (м/с)
+-     * @param currentRightSpeed  - текущая скорость правого колеса (м/с)
++     * Один такт контура скорости (вызывать строго по таймеру dt)
++     * @param currentLeftSpeed   - измеренная скорость левого колеса (м/с)
++     * @param currentRightSpeed  - измеренная скорость правого колеса (м/с)
+      */
+     void update(float currentLeftSpeed, float currentRightSpeed);
+ 
+@@ -49,22 +59,21 @@
+     float getTargetLeft() const  { return _targetLeft; }
+     float getTargetRight() const { return _targetRight; }
+ 
+-    float getFilteredLeft() const  { return _filteredLeft; }
+-    float getFilteredRight() const { return _filteredRight; }
++    // Измеренные скорости колёс (м/с), как их видит регулятор
++    float getFilteredLeft() const  { return _measLeft; }
++    float getFilteredRight() const { return _measRight; }
+ 
+     // Установка новых коэффициентов ПИД (можно вызывать в любой момент)
+     void setPID(float kpL, float kiL, float kdL,
+                 float kpR, float kiR, float kdR);
+ 
+-    // Получение текущих управляющих сигналов (опционально)
++    // Текущие управляющие сигналы: скважность ШИМ, [-1, 1]
+     float getOutputLeft() const  { return _outputLeft; }
+     float getOutputRight() const { return _outputRight; }
+ 
+ private:
+     Adafruit_PWMServoDriver _pwm;
+     uPID _pidL, _pidR;
+-    MovingAverage<5> _filterLeft;
+-    MovingAverage<5> _filterRight;
+ 
+     float _wheelBase;
+     float _maxWheelSpeed;
+@@ -75,16 +84,28 @@
+ 
+     float _targetLeft, _targetRight;
+     float _outputLeft, _outputRight;
+-    float _filteredLeft, _filteredRight;
++    float _measLeft, _measRight;
+ 
+-    uint8_t _leftChannel, _rightChannel;
+-    bool _invertLeft, _invertRight;
+-    float _deathLine;
++    // Feedforward
++    float _ffGainL, _ffDzL, _ffGainR, _ffDzR;
+ 
++    bool _openLoop;
++    float _openDutyL, _openDutyR;
++    int8_t _prevSignL, _prevSignR; // знак уставки на прошлом такте (сброс интегратора при реверсе)
++    float _prevRefL, _prevRefR;    // уставка на прошлом такте (обнаружение ступеньки)
++    int16_t _frozenL, _frozenR;    // сколько тактов подряд интеграл заморожен при разгоне
+ 
+-    // Вспомогательная функция масштабирования с ограничением
+-    static float _mapFloat(float value, float fromLow, float fromHigh,
+-                           float toLow, float toHigh);
++    uint8_t _leftChannel, _rightChannel;
++    bool _invertLeft, _invertRight;
++    // Скважность ниже этой не подаётся на мотор (не пищать и не греть впустую)
++    float _minDuty;
++    // Какая сторона моста включена в последний раз: -1 назад, 0 выкл, +1 вперёд,
++    // 2 - неизвестно (после сброса). Позволяет писать на такте один регистр вместо двух.
++    int8_t _lastDir[2];
++
++    // Один такт для одного колеса: feedforward + ПИ, возвращает скважность [-1, 1]
++    float _wheelStep(uPID &pid, float meas, float gain, float deadzone, int8_t &prevSign,
++                     float &prevRef, int16_t &frozenTicks);
+ 
+     // Низкоуровневая запись на мотор
+     void _motorWrite(uint8_t channel, float speed);
+@@ -93,4 +114,4 @@
+     float_t _cutValue(float_t min, float_t max, float_t value);
+ };
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff -ruN fw_orig/esp32_firmware/protocol_wrapper.cpp fw_new/esp32_firmware/protocol_wrapper.cpp
+--- fw_orig/esp32_firmware/protocol_wrapper.cpp	2026-05-07 10:50:20.000000000 +0300
++++ fw_new/esp32_firmware/protocol_wrapper.cpp	2026-10-26 23:18:36.953217078 +0300
+@@ -23,4 +23,29 @@
+     if (len > 0 && len < (int)sizeof(buf)) {
+         Serial.write(buf, len);
+     }
++}
++
++void telemetryPublish(uint32_t t_us,
++                      float ref_L, float vel_L, float duty_L,
++                      float ref_R, float vel_R, float duty_R) {
++    static char buf[110];
++    int len = snprintf(buf, sizeof(buf),
++                       "$3;%lu;%.4f;%.4f;%.3f;%.4f;%.4f;%.3f;#\r\n",
++                       (unsigned long)t_us,
++                       ref_L, vel_L, duty_L, ref_R, vel_R, duty_R);
++    // Не блокируем контур: если буфер UART занят, эту строку пропускаем
++    if (len > 0 && len < (int)sizeof(buf) && Serial.availableForWrite() >= len) {
++        Serial.write(buf, len);
++    }
++}
++
++void feedforwardPublish(double gain_L, double deadzone_L,
++                        double gain_R, double deadzone_R) {
++    static char buf[110];
++    int len = snprintf(buf, sizeof(buf),
++                       "$4;%.5f;%.5f;%.5f;%.5f;#\r\n",
++                       gain_L, deadzone_L, gain_R, deadzone_R);
++    if (len > 0 && len < (int)sizeof(buf)) {
++        Serial.write(buf, len);
++    }
+ }
+\ No newline at end of file
+diff -ruN fw_orig/esp32_firmware/protocol_wrapper.h fw_new/esp32_firmware/protocol_wrapper.h
+--- fw_orig/esp32_firmware/protocol_wrapper.h	2026-05-06 13:42:09.000000000 +0300
++++ fw_new/esp32_firmware/protocol_wrapper.h	2026-10-26 23:18:32.229217186 +0300
+@@ -18,4 +18,15 @@
+ void regulatorsCoefficientsPublish (double Kp_L, double Ki_L, double Kd_L,
+                                     double Kp_R, double Ki_R, double Kd_R);
+ 
++// mmsg type = 3: телеметрия контура скорости (только пока включена командой $12).
++// t_us - время такта, мкс (micros(), переполняется); уставка и скорость - м/с;
++// duty - скважность ШИМ [-1, 1]. Строка не отправляется, если в буфере UART нет места.
++void telemetryPublish (uint32_t t_us,
++                       float ref_L, float vel_L, float duty_L,
++                       float ref_R, float vel_R, float duty_R);
++
++// mmsg type = 4: параметры feedforward (ответ на $13)
++void feedforwardPublish (double gain_L, double deadzone_L,
++                         double gain_R, double deadzone_R);
++
+ #endif
+\ No newline at end of file
+diff -ruN fw_orig/esp32_firmware/speed_estimator.h fw_new/esp32_firmware/speed_estimator.h
+--- fw_orig/esp32_firmware/speed_estimator.h	1970-01-01 03:00:00.000000000 +0300
++++ fw_new/esp32_firmware/speed_estimator.h	2026-10-26 23:25:52.191461277 +0300
+@@ -0,0 +1,132 @@
++// Copyright (c) 2026 Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
++// SPDX-License-Identifier: MIT
++// Details in the LICENSE file in the root of the package.
++
++// Оценка скорости по фронтам квадратурного энкодера методом M/T.
++// Без зависимостей от Arduino: логику можно проверить тестом на компьютере
++// (см. tools/host_test).
++//
++// Идея. Прерывание энкодера на каждом фронте увеличивает счётчик позиции pos и
++// запоминает время этого фронта tLast (обе величины читаются вместе, атомарно).
++// На каждом такте контура estimator получает (pos, tLast, now):
++//
++//     ω = N · α / (tLast − tAnchor),
++//
++// где N - сколько фронтов набежало между "якорем" (последний фронт, учтённый на
++// прошлом шаге) и последним фронтом сейчас, α - угол одного фронта. Интервал
++// берётся между фронтами, а не между границами тактов, поэтому ошибка
++// квантования не зависит от периода контура:
++//   - на высокой скорости в окне десятки фронтов - усреднение без задержки;
++//   - на низкой скорости в окне 0-1 фронт - метод сам превращается в T-метод.
++//
++// Если новых фронтов нет, скорость не может быть выше α/(now − tLast): оценка
++// плавно спадает при торможении, а не залипает на старом значении. Дольше
++// timeoutUs без фронтов - скорость 0, а первый фронт после остановки только
++// переносит якорь (интервал до него включал бы простой).
++//
++// minEdges > 1 растягивает окно на несколько тактов, пока не наберётся достаточно
++// фронтов: сглаживает неидеальность квадратуры ценой задержки на низких скоростях.
++
++#ifndef SPEED_ESTIMATOR_H
++#define SPEED_ESTIMATOR_H
++
++#include <stdint.h>
++#include <math.h>
++
++struct MTSpeedParams {
++  float revPerEdge;   // оборотов на один фронт (1 / (метки * 4))
++  uint32_t timeoutUs; // нет фронтов дольше - скорость 0, мкс
++  int32_t minEdges;   // минимум фронтов в окне (>= 1); см. config.h
++  float maxSane;      // |ω| выше этого (об/с) считается помехой и отбрасывается
++  float filterK;      // 1 = без фильтра; 0 < k < 1: ω_f += k (ω - ω_f) на такте контура
++};
++
++class MTSpeedEstimator {
++public:
++  explicit MTSpeedEstimator(const MTSpeedParams &p) : _p(p) {}
++
++  // Забыть историю (при старте и после паузы): следующий вызов update() только "якорится"
++  void reset() {
++    _valid = false;
++    _stopped = false;
++    _raw = 0.0f;
++    _filt = 0.0f;
++  }
++
++  /**
++   * @param pos    - накопленная позиция, фронтов (со знаком; переполнение допустимо)
++   * @param tLast  - время последнего фронта, мкс (счётчик может переполняться)
++   * @param now    - текущее время, мкс. Брать ПОСЛЕ снимка (pos, tLast)
++   * @return скорость, об/с (знак - направление счёта pos)
++   */
++  float update(int32_t pos, uint32_t tLast, uint32_t now) {
++    if (!_valid) {
++      _anchorPos = pos;
++      _anchorT = tLast;
++      _valid = true;
++      _stopped = false;
++      _raw = 0.0f;
++      _filt = 0.0f;
++      return 0.0f;
++    }
++
++    // Возраст последнего фронта. Знаковый: now и tLast читаются не одновременно.
++    int32_t age = (int32_t)(now - tLast);
++    if (age < 0) age = 0;
++
++    // Фронтов с момента якоря (знак = направление). Через uint32: переполнение определено.
++    const int32_t n = (int32_t)((uint32_t)pos - (uint32_t)_anchorPos);
++    const int32_t absN = n < 0 ? -n : n;
++
++    if ((uint32_t)age > _p.timeoutUs) {
++      // Давно нет фронтов: стоим. Якорь устарел, его заменит первый же новый фронт.
++      _raw = 0.0f;
++      _stopped = true;
++    } else if (_stopped) {
++      if (n != 0) {
++        // Первый фронт после остановки: интервал до него включает простой, скорость по нему
++        // не считается. Якорь переносим на этот фронт; скорость появится со следующим окном.
++        _anchorPos = pos;
++        _anchorT = tLast;
++        _stopped = false;
++      }
++    } else if (absN >= _p.minEdges) {
++      const uint32_t dt = tLast - _anchorT;
++      if (dt > 0) {
++        const float w = (float)n * _p.revPerEdge / ((float)dt * 1e-6f);
++        if (fabsf(w) <= _p.maxSane) _raw = w;
++      }
++      _anchorPos = pos;
++      _anchorT = tLast;
++    }
++
++    // Результат этого такта. _raw хранит последнее измеренное окно и ограничением не портится:
++    // иначе один долгий интервал из-за неидеальной квадратуры занижал бы скорость до следующего окна.
++    float out = _raw;
++    if (!_stopped && age > 0) {
++      // Следующий фронт не пришёл за age: скорость не выше одного фронта за age.
++      // Запас BOUND_MARGIN: у неидеальной квадратуры интервалы между фронтами неравны,
++      // и без запаса оценка проваливалась бы перед каждым "длинным" интервалом.
++      const float bound = BOUND_MARGIN * _p.revPerEdge * 1e6f / (float)age;
++      if (out > bound) out = bound;
++      else if (out < -bound) out = -bound;
++    }
++
++    _filt += _p.filterK * (out - _filt);
++    return _filt;
++  }
++
++  float speed() const { return _filt; }
++
++private:
++  static constexpr float BOUND_MARGIN = 1.5f;
++  MTSpeedParams _p;
++  bool _valid = false;
++  bool _stopped = false;  // нет фронтов дольше timeoutUs; якорь устарел
++  int32_t _anchorPos = 0;
++  uint32_t _anchorT = 0;
++  float _raw = 0.0f;
++  float _filt = 0.0f;
++};
++
++#endif

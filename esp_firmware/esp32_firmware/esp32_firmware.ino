@@ -5,9 +5,9 @@
 /**
   @author Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
   @date 25.10.2026
-  @version 2.2.0
+  @version 2.3.0
 */
-const char *VERSION = "2.2.0";
+const char *VERSION = "2.3.0";
 
 #include <Arduino.h>
 #include <math.h>
@@ -25,6 +25,7 @@ const char *VERSION = "2.2.0";
 #include "display_manager.h"
 #include "serial_receiver.h"
 #include "odometry.h"
+#include "speed_estimator.h"
 
 Encoders encoders;
 ErrorManager error_manager;
@@ -33,7 +34,10 @@ MotorController controller(WHEEL_BASE, MAX_CONSTRUCTIVE_VELOCITY, DT,
                            KP_R, KI_R, KD_R);
 
 INA219 INA(0x41);
-FlashStorageManager flashStorage("Memory1");
+// Пространство имён NVS изменено с "Memory1" на "Memory2": коэффициенты ПИД, сохранённые
+// прежней прошивкой (под контур 10 Гц), в новом контуре не годятся. Чтобы вернуть старые
+// значения, верните "Memory1" (они лежат во flash нетронутыми).
+FlashStorageManager flashStorage("Memory2");
 DisplayManager display(update_voltage_timer_timeout); // 200 мс интервал обновления
 SerialReceiver mainReceiver(Serial);                  // основной канал (USB)
 SerialReceiver jetsonReceiver(Serial1);               // Jetson Nano
@@ -52,17 +56,24 @@ bool i2cProbe(uint8_t address)
 
 // Для таймеров
 unsigned long odom_tmr = 0;   // момент последнего расчёта одометрии, мкс
+unsigned long control_next_us = 0; // момент следующего такта контура скорости, мкс
 unsigned long emergency_timer = 0;
 uint64_t update_timer;
 
-// Одометрия (50 Гц) и накопители тиков для ПИД (10 Гц)
+// Одометрия (50 Гц): считается по тикам энкодеров, как и раньше
 DiffDriveOdometry odometry(WHEEL_BASE);
-uint8_t odom_counter = 0;        // сколько периодов одометрии прошло с последнего ПИД
-int32_t pid_left_ticks = 0;      // тики за текущий период ПИД
-int32_t pid_right_ticks = 0;
-unsigned long pid_delta = 0;     // длительность текущего периода ПИД, мкс
 
-// Скорости для отправки на Jetson: обновляются раз в период ПИД
+// Оценка скорости колёс по фронтам (M/T-метод), по одному оценщику на колесо
+const MTSpeedParams SPEED_PARAMS = {1.0f / ENC_EDGES_PER_REV, SPEED_TIMEOUT_US,
+                                    SPEED_MIN_EDGES, SPEED_MAX_SANE_REV_S, SPEED_FILTER_K};
+MTSpeedEstimator speedR(SPEED_PARAMS);
+MTSpeedEstimator speedL(SPEED_PARAMS);
+
+// Телеметрия контура скорости ($12): включается командой, гаснет без связи
+bool telemetry_on = false;
+uint8_t telemetry_div = 0;
+
+// Скорости для отправки на Jetson: обновляются на каждом такте контура (100 Гц)
 float linear_vel_ = 0.0;
 float angular_vel_ = 0.0;
 float left_vel_ = 0.0;
@@ -93,6 +104,8 @@ const unsigned long I2C_CHECK_INTERVAL = 500; // 0.5 секунды
 
 void checkI2CDevices()
 {
+  bool reinitDone = false; // после переинициализации Wire.begin() мог сбросить частоту шины
+
   // -------- INA219 (0x41) --------
   bool inaResponds = i2cProbe(0x41);
   if (inaResponds)
@@ -115,6 +128,7 @@ void checkI2CDevices()
       {
         inaOk = true;
         inaErrors = 0;
+        reinitDone = true;
         Serial.println("INA219 reinitialized");
       }
       else
@@ -146,6 +160,7 @@ void checkI2CDevices()
       {
         pwmOk = true;
         pwmErrors = 0;
+        reinitDone = true;
         // Восстанавливаем управление моторами
         controller.setTargetVelocity(0.0, 0.0);
         // Но update() заново рассчитает ПИД и запишет моторы, что нам и нужно
@@ -179,6 +194,7 @@ void checkI2CDevices()
       {
         oledOk = true;
         oledErrors = 0;
+        reinitDone = true;
         Serial.println("OLED reinitialized");
       }
       else
@@ -188,6 +204,9 @@ void checkI2CDevices()
       }
     }
   }
+
+  if (reinitDone)
+    Wire.setClock(I2C_CLOCK_HZ);
 }
 
 void parseJetsonMessage(const char *fullMessage)
@@ -231,11 +250,11 @@ void parseJetsonMessage(const char *fullMessage)
 */
 float convert_ticks_to_freq(long ticks, long timeout_micros, char dir)
 {
-  const float steps_per_tick = 1.0 / 4.0;  // 4 импульса на 1 шаг
-  const float turn_per_step = 1.0 / 270.0; // 270 шагов в 1 полном обороте
+  // 4 импульса на 1 шаг, 270 шагов на оборот (ENC_EDGES_PER_REV из config.h)
+  const float turn_per_tick = 1.0 / ENC_EDGES_PER_REV;
   const double micros_to_sec = 1.0 / 1000000.0;
   float timeout_sec = timeout_micros * micros_to_sec;
-  float result = turn_per_step * steps_per_tick * ticks / timeout_sec;
+  float result = turn_per_tick * ticks / timeout_sec;
 
   // для левого колеса инвертируем частоту
   if (dir == 'l')
@@ -262,6 +281,54 @@ float convert_ticks_to_distance(long ticks, char dir)
   return turns * 2 * Pi * WHEEL_RADIUS;
 }
 
+/**
+ * @brief Можно ли сейчас занимать шину I2C медленной операцией (дисплей, INA219,
+ * проверка устройств). Да, если до следующего такта контура осталось достаточно
+ * времени: PCA9685 с моторами сидит на той же шине, и такт нельзя задерживать.
+ */
+bool i2cWindowOpen()
+{
+  return (long)(control_next_us - micros()) > (long)I2C_WINDOW_MIN_US;
+}
+
+/**
+ * @brief Один такт контура скорости (100 Гц): оценка скорости колёс по фронтам
+ * энкодеров и обновление регуляторов (feedforward + ПИ).
+ */
+void controlStep()
+{
+  // Снимок (позиция, время последнего фронта) для каждого колеса, затем время "сейчас":
+  // возраст последнего фронта получается неотрицательным
+  int32_t posR, posL;
+  uint32_t lastR, lastL;
+  encoders.snapshotRight(posR, lastR);
+  encoders.snapshotLeft(posL, lastL);
+  const uint32_t now = micros();
+
+  // об/с -> м/с; знак колеса приводится так, чтобы вперёд было > 0 у обоих
+  const float revR = ENC_SIGN_R * speedR.update(posR, lastR, now);
+  const float revL = ENC_SIGN_L * speedL.update(posL, lastL, now);
+  const float rightLinVel = revR * 2 * Pi * WHEEL_RADIUS;
+  const float leftLinVel = revL * 2 * Pi * WHEEL_RADIUS;
+
+  // Регуляторы выдают сигнал на моторы
+  controller.update(leftLinVel, rightLinVel);
+
+  // Скорости для отправки на Jetson
+  right_vel_ = controller.getFilteredRight();
+  left_vel_ = controller.getFilteredLeft();
+  linear_vel_ = (right_vel_ + left_vel_) / 2.0;
+  angular_vel_ = (right_vel_ - left_vel_) / WHEEL_BASE; // для дифференциального привода
+
+  if (telemetry_on && ++telemetry_div >= TELEMETRY_DECIMATION)
+  {
+    telemetry_div = 0;
+    telemetryPublish(now,
+                     controller.getTargetLeft(), left_vel_, controller.getOutputLeft(),
+                     controller.getTargetRight(), right_vel_, controller.getOutputRight());
+  }
+}
+
 void setup()
 {
 
@@ -273,6 +340,7 @@ void setup()
 
   error_manager.check_exec(Wire.begin(), "Error! Failed to init I2C bus.");
   Wire.setTimeOut(50); // 50 мс таймаут на транзакцию
+  Wire.setClock(I2C_CLOCK_HZ);
 
   error_manager.soft_check_exec(i2cProbe(0x3C), "Warning! OLED-display is unaviable through I2C bus");
   error_manager.soft_check_exec(i2cProbe(0x41), "Warning! INA219 sensor is unaviable through I2C bus");
@@ -284,6 +352,7 @@ void setup()
   error_manager.check_exec(INA.begin(), "Error! Failed to init INA219 module.");
 
   error_manager.check_exec(display.begin((char *)VERSION), "Error! OLED init failed.");
+  Wire.setClock(I2C_CLOCK_HZ); // display.begin() вызывает Wire.begin() ещё раз
 
   delay(100);
 
@@ -291,12 +360,19 @@ void setup()
   flashStorage.loadPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
   controller.setPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
 
+  // Feedforward: значения из config.h, если калибровка ещё не сохранялась во flash
+  flashStorage.loadFF(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
+  controller.setFeedforward(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
+
   controller.setWheelSpeeds(0.0, 0.0);
 
   emergency_timer = millis();
-  // Отсчёт одометрии и ПИД с конца инициализации, а не с включения питания
+  // Отсчёт одометрии и контура скорости с конца инициализации, а не с включения питания
   encoders.reset();
+  speedL.reset();
+  speedR.reset();
   odom_tmr = micros();
+  control_next_us = micros() + CONTROL_PERIOD_US;
 }
 
 void loop()
@@ -306,13 +382,32 @@ void loop()
   mainReceiver.update();
   jetsonReceiver.update();
 
-  if ((millis() - emergency_timer > emergency_timer_timeout) || (bus_voltage < min_voltage))
+  const bool host_silent = (millis() - emergency_timer > emergency_timer_timeout);
+  if (host_silent || (bus_voltage < min_voltage))
   {
-    // Аварийная остановка
+    // Аварийная остановка (возвращает и замкнутый режим, если шёл эксперимент $10)
     controller.setWheelSpeeds(0.0, 0.0);
+  }
+  if (host_silent)
+  {
+    telemetry_on = false; // нет связи: канал нужен одометрии
   }
 
   unsigned long now = micros();
+
+  // Контур скорости: каждые CONTROL_PERIOD_US (10 мс, 100 Гц)
+  if ((long)(now - control_next_us) >= 0)
+  {
+    control_next_us += CONTROL_PERIOD_US;
+    if ((long)(now - control_next_us) >= 0)
+    {
+      // Опоздали больше чем на период (долгая операция): пропущенные такты не догоняем
+      control_next_us = now + CONTROL_PERIOD_US;
+    }
+    controlStep();
+    now = micros();
+  }
+
   unsigned long odom_delta = now - odom_tmr;
 
   // Одометрия: каждые odom_timer_timeout (20 мс, 50 Гц)
@@ -328,38 +423,14 @@ void loop()
     odometry.update(convert_ticks_to_distance(leftTicks, 'l'),
                     convert_ticks_to_distance(rightTicks, 'r'));
 
-    // 3. Тики копятся для ПИД: регулятор работает раз в ODOM_RATE_DIVIDER
-    //    периодов (100 мс), как и раньше - под этот период подобраны коэффициенты
-    pid_left_ticks += leftTicks;
-    pid_right_ticks += rightTicks;
-    pid_delta += odom_delta;
-
-    if (++odom_counter >= ODOM_RATE_DIVIDER)
+    // 3. Публикация одометрии (50 Гц). Скорости колёс берутся из контура скорости
+    //    (right_vel_ и др. обновляются на каждом его такте). Пока включена
+    //    телеметрия, канал отдан ей, и одометрия не публикуется.
+    if (!telemetry_on)
     {
-      // 3.1. Тики за период ПИД -> частота вращения (об/с) -> скорость колеса (м/с)
-      float rightFreq = convert_ticks_to_freq(pid_right_ticks, pid_delta, 'r');
-      float leftFreq = convert_ticks_to_freq(pid_left_ticks, pid_delta, 'l');
-      float rightLinVel = rightFreq * 2 * Pi * WHEEL_RADIUS;
-      float leftLinVel = leftFreq * 2 * Pi * WHEEL_RADIUS;
-
-      // 3.2. Обновляем ПИД-регуляторы и выдаём сигнал на моторы
-      controller.update(leftLinVel, rightLinVel);
-
-      // 3.3. Сглаженные скорости для отправки на Jetson
-      right_vel_ = controller.getFilteredRight();
-      left_vel_ = controller.getFilteredLeft();
-      linear_vel_ = (right_vel_ + left_vel_) / 2.0;
-      angular_vel_ = (right_vel_ - left_vel_) / WHEEL_BASE; // для дифференциального привода
-
-      odom_counter = 0;
-      pid_left_ticks = 0;
-      pid_right_ticks = 0;
-      pid_delta = 0;
+      odomPublish(odometry.x(), odometry.y(), odometry.heading(),
+                  linear_vel_, angular_vel_, left_vel_, right_vel_);
     }
-
-    // 4. Публикация одометрии (50 Гц)
-    odomPublish(odometry.x(), odometry.y(), odometry.heading(),
-                linear_vel_, angular_vel_, left_vel_, right_vel_);
   }
 
   // Обработка входного значения
@@ -412,6 +483,39 @@ void loop()
       regulatorsCoefficientsPublish(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
       break;
 
+    case Command::SET_DUTY:
+      // Разомкнутый режим для калибровки: шлите не реже раза в секунду,
+      // иначе сработает аварийная остановка
+      if (cmd.count >= 2 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]))
+        controller.setOpenLoop(cmd.args[0], cmd.args[1]);
+      break;
+
+    case Command::SET_FF:
+      if (cmd.count >= 4 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]) &&
+          isfinite(cmd.args[2]) && isfinite(cmd.args[3]))
+      {
+        FF_GAIN_L = constrain(cmd.args[0], 0.0f, 20.0f);
+        FF_DEADZONE_L = constrain(cmd.args[1], 0.0f, 0.9f);
+        FF_GAIN_R = constrain(cmd.args[2], 0.0f, 20.0f);
+        FF_DEADZONE_R = constrain(cmd.args[3], 0.0f, 0.9f);
+        controller.setFeedforward(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
+        if (cmd.count >= 5 && cmd.args[4] >= 0.5f)
+          flashStorage.saveFF(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
+      }
+      break;
+
+    case Command::SET_TELEMETRY:
+      if (cmd.count >= 1)
+      {
+        telemetry_on = (cmd.args[0] >= 0.5f);
+        telemetry_div = 0;
+      }
+      break;
+
+    case Command::REQUEST_FF:
+      feedforwardPublish(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
+      break;
+
     case Command::UNKNOWN:
       break;
     }
@@ -424,7 +528,8 @@ void loop()
     parseJetsonMessage(raw_1);
   }
 
-  if ((millis() - update_timer >= update_voltage_timer_timeout) && inaOk)
+  // Медленные операции I2C - только в свободном окне между тактами контура
+  if ((millis() - update_timer >= update_voltage_timer_timeout) && inaOk && i2cWindowOpen())
   {
     update_timer = millis();
     // Чтение напряжения и тока
@@ -434,16 +539,16 @@ void loop()
     current = shunt_v / 0.1 / 1000;
   }
   // Мониторинг устройств I2C (не чаще 2 секунд)
-  if (millis() - lastI2CCheck >= I2C_CHECK_INTERVAL)
+  if ((millis() - lastI2CCheck >= I2C_CHECK_INTERVAL) && i2cWindowOpen())
   {
     lastI2CCheck = millis();
     checkI2CDevices();
   }
 
-  // Обновление дисплея (само проверяет интервал)
+  // Обновление дисплея (само проверяет интервал; кадр уходит по кускам, когда шина свободна)
   if (oledOk)
   {
-    display.update(wifi_ssid, wifi_ip, wifi_password, bus_voltage, current, pros);
+    display.update(wifi_ssid, wifi_ip, wifi_password, bus_voltage, current, pros, i2cWindowOpen());
   }
 
   // Индикация ошибок во время работы: светодиод часто мигает, пока

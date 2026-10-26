@@ -25,7 +25,8 @@ bool DisplayManager::reinitialize(const char* version) {
 }
 
 void DisplayManager::update(const String& ssid, const String& ip, const String& password,
-                            float busVoltage, float current, int batteryPercent) {
+                            float busVoltage, float current, int batteryPercent,
+                            bool allowBus) {
   // Определяем, перешли ли мы в режим низкого заряда
   bool low = (batteryPercent < 20);
   if (low != _lowBatteryMode) {
@@ -48,6 +49,27 @@ void DisplayManager::update(const String& ssid, const String& ip, const String& 
       _lastUpdate = millis();
       _showWarning = false;  // всегда показываем обычную страницу
       _render(ssid, ip, password, busVoltage, current, batteryPercent);
+    }
+  }
+
+  // Отправляем очередной кусок кадра, если шина свободна
+  if (_flushing && allowBus) {
+    _flushStep();
+  }
+}
+
+// Отправляет один кусок кадра: CHUNK_COLS столбцов одной страницы
+void DisplayManager::_flushStep() {
+  const int x0 = _flushCol;
+  const int x1 = x0 + CHUNK_COLS - 1;
+  const int y = _flushPage * 8;  // верхняя строка страницы
+  _oled.update(x0, y, x1, y);
+  _flushCol += CHUNK_COLS;
+  if (_flushCol >= 128) {
+    _flushCol = 0;
+    if (++_flushPage >= PAGES) {
+      _flushPage = 0;
+      _flushing = false;
     }
   }
 }
@@ -95,5 +117,8 @@ void DisplayManager::_render(const String& ssid, const String& ip, const String&
     _oled.println("A");
   }
 
-  _oled.update();
+  // Кадр готов в буфере; на дисплей он уходит по кускам из update()
+  _flushing = true;
+  _flushPage = 0;
+  _flushCol = 0;
 }

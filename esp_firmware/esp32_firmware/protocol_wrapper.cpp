@@ -24,3 +24,28 @@ void regulatorsCoefficientsPublish(double Kp_L, double Ki_L, double Kd_L,
         Serial.write(buf, len);
     }
 }
+
+void telemetryPublish(uint32_t t_us,
+                      float ref_L, float vel_L, float duty_L,
+                      float ref_R, float vel_R, float duty_R) {
+    static char buf[110];
+    int len = snprintf(buf, sizeof(buf),
+                       "$3;%lu;%.4f;%.4f;%.3f;%.4f;%.4f;%.3f;#\r\n",
+                       (unsigned long)t_us,
+                       ref_L, vel_L, duty_L, ref_R, vel_R, duty_R);
+    // Не блокируем контур: если буфер UART занят, эту строку пропускаем
+    if (len > 0 && len < (int)sizeof(buf) && Serial.availableForWrite() >= len) {
+        Serial.write(buf, len);
+    }
+}
+
+void feedforwardPublish(double gain_L, double deadzone_L,
+                        double gain_R, double deadzone_R) {
+    static char buf[110];
+    int len = snprintf(buf, sizeof(buf),
+                       "$4;%.5f;%.5f;%.5f;%.5f;#\r\n",
+                       gain_L, deadzone_L, gain_R, deadzone_R);
+    if (len > 0 && len < (int)sizeof(buf)) {
+        Serial.write(buf, len);
+    }
+}

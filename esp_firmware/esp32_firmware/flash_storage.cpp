@@ -60,3 +60,24 @@ void FlashStorageManager::savePID(float Kp_L, float Ki_L, float Kd_L,
     // nvsInit не трогаем – он уже есть после первого begin()
     _prefs.end();
 }
+
+void FlashStorageManager::loadFF(float &gainL, float &deadzoneL,
+                                 float &gainR, float &deadzoneR) {
+    _prefs.begin(_namespace, true);
+    // Второй аргумент - значение, если ключа нет (прошивка обновлена, калибровки ещё не было)
+    gainL = _prefs.getFloat("Kff_L", gainL);
+    deadzoneL = _prefs.getFloat("Dz_L", deadzoneL);
+    gainR = _prefs.getFloat("Kff_R", gainR);
+    deadzoneR = _prefs.getFloat("Dz_R", deadzoneR);
+    _prefs.end();
+}
+
+void FlashStorageManager::saveFF(float gainL, float deadzoneL,
+                                 float gainR, float deadzoneR) {
+    _prefs.begin(_namespace, false);
+    _prefs.putFloat("Kff_L", gainL);
+    _prefs.putFloat("Dz_L", deadzoneL);
+    _prefs.putFloat("Kff_R", gainR);
+    _prefs.putFloat("Dz_R", deadzoneR);
+    _prefs.end();
+}
