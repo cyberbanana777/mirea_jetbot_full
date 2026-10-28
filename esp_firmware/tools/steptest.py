@@ -86,7 +86,7 @@ def run_steps(link, wheel_r, levels):
         for ln in link.poll():
             s = tel.parse(ln)
             if not s and ln:
-                if ln.startswith("$4;") or ln.startswith("$2;"):
+                if ln.startswith(("$4;", "$2;", "$6;")):
                     params.append(ln)        # ответы на $13 / $5: их не вытесняют строки одометрии $1
                 else:
                     other[:] = (other + [ln])[-5:]

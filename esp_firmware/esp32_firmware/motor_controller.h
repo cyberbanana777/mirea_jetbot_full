@@ -44,6 +44,13 @@ public:
     void setOpenLoop(float dutyLeft, float dutyRight);
     bool isOpenLoop() const { return _openLoop; }
 
+    // Фильтр уставки: одинаковый для обоих колёс фильтр первого порядка (постоянная времени, с).
+    // Оба колеса отслеживают одну и ту же плавную траекторию, поэтому ступенька задания не даёт
+    // перерегулирования и переходные процессы колёс совпадают, даже если двигатели разные.
+    // 0 - без фильтра. Нулевая уставка (остановка, в том числе аварийная) проходит без задержки.
+    void setRefFilter(float tauSeconds);
+    float getRefFilter() const { return _refTau; }
+
     // Feedforward: u_ff = sign(v) * (deadzone + gain * |v|), скважность ШИМ
     // gain - скважность на 1 м/с, deadzone - скважность, с которой колесо трогается
     void setFeedforward(float gainL, float deadzoneL, float gainR, float deadzoneR);
@@ -58,6 +65,10 @@ public:
     // Геттеры текущих целевых скоростей (после ограничений)
     float getTargetLeft() const  { return _targetLeft; }
     float getTargetRight() const { return _targetRight; }
+
+    // Уставки после фильтра (то, что реально отрабатывает регулятор), м/с
+    float getRefLeft() const  { return _refL; }
+    float getRefRight() const { return _refR; }
 
     // Измеренные скорости колёс (м/с), как их видит регулятор
     float getFilteredLeft() const  { return _measLeft; }
@@ -92,7 +103,9 @@ private:
     bool _openLoop;
     float _openDutyL, _openDutyR;
     int8_t _prevSignL, _prevSignR; // знак уставки на прошлом такте (сброс интегратора при реверсе)
-    float _prevRefL, _prevRefR;    // уставка на прошлом такте (обнаружение ступеньки)
+    float _refTau;                 // постоянная времени фильтра уставки, с
+    float _refL, _refR;            // уставки после фильтра, м/с
+    float _tgtPrevL, _tgtPrevR;    // заданная скорость на прошлом такте (обнаружение ступеньки)
     int16_t _frozenL, _frozenR;    // сколько тактов подряд интеграл заморожен при разгоне
 
     uint8_t _leftChannel, _rightChannel;
@@ -105,7 +118,10 @@ private:
 
     // Один такт для одного колеса: feedforward + ПИ, возвращает скважность [-1, 1]
     float _wheelStep(uPID &pid, float meas, float gain, float deadzone, int8_t &prevSign,
-                     float &prevRef, int16_t &frozenTicks);
+                     int16_t &frozenTicks);
+
+    // Фильтр уставки одного колеса: target -> ref; сообщает о ступеньке заданной скорости
+    void _filterRef(float target, float &ref, float &prevTarget, int16_t &frozenTicks, float alpha);
 
     // Низкоуровневая запись на мотор
     void _motorWrite(uint8_t channel, float speed);

@@ -13,6 +13,8 @@ struct RunResult {
   StepMetrics right;
   StepMetrics left;
   double i2cWritesPerSec = 0;
+  double maxDiffRev = 0;   // наибольшая разность скоростей колёс |wL - wR|, об/с
+  double peakYawDeg = 0;   // наибольший набег курса из-за разности скоростей, градусы
 };
 
 template <class Chain>
@@ -46,6 +48,15 @@ RunResult runStep(Chain &ch, double rRev, double tTotal, double asym,
     if (tt >= nextRec) { t.push_back(tt); wR.push_back(wr.w); wL.push_back(wl.w); nextRec += 1e-3; }
   }
   RunResult res;
+  {
+    double yaw = 0;
+    for (size_t i = 0; i < t.size(); ++i) {
+      const double d = wR[i] - wL[i];                    // об/с; правое быстрее -> поворот влево
+      res.maxDiffRev = std::max(res.maxDiffRev, fabs(d));
+      yaw += d * REV_TO_MS / 0.1775 * 1e-3;              // рад, шаг записи 1 мс, база 0.1775 м
+      res.peakYawDeg = std::max(res.peakYawDeg, fabs(yaw) * 180.0 / 3.14159265358979);
+    }
+  }
   res.right = metrics(t, wR, rRev, tStep);
   res.left = metrics(t, wL, rRev, tStep);
   res.i2cWritesPerSec = ch.i2cWrites() / tTotal;

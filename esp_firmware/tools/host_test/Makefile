@@ -6,7 +6,7 @@ CXX ?= g++
 CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter
 STUBS = -Istubs -I$(UPID_DIR)
 
-all: sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue
+all: sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue
 
 sim_new: sim_new.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_new.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
@@ -16,6 +16,9 @@ sim_real: sim_real.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller
 
 sim_floor: sim_floor.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_floor.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
+
+sim_sync: sim_sync.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
+	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_sync.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
 
 sim_sweep: sim_sweep.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_sweep.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
@@ -48,4 +51,4 @@ test: all
 	./sim_new
 
 clean:
-	rm -f test_glue sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv *.o trace_new.csv
+	rm -f test_glue sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv *.o trace_new.csv

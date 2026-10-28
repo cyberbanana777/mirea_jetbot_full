@@ -49,3 +49,11 @@ void feedforwardPublish(double gain_L, double deadzone_L,
         Serial.write(buf, len);
     }
 }
+
+void refFilterPublish(double tau_s) {
+    static char buf[40];
+    int len = snprintf(buf, sizeof(buf), "$6;%.5f;#\r\n", tau_s);
+    if (len > 0 && len < (int)sizeof(buf)) {
+        Serial.write(buf, len);
+    }
+}

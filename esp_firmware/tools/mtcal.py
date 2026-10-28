@@ -341,7 +341,7 @@ def fit_step(log):
     return out
 
 
-def recommend(log, wheel_r, lam_factor=0.5):
+def recommend(log, wheel_r, lam_factor=0.5, lambda_s=None):
     ff, pi = {}, {}
     br = fit_breakaway(log)
     st = fit_static(log)
@@ -351,15 +351,15 @@ def recommend(log, wheel_r, lam_factor=0.5):
         tm, lag = sp[name]
         k_ms = kv * TWO_PI * wheel_r                       # м/с на единицу скважности
         ff[name] = (1.0 / k_ms, dz)                        # (gain, dz)
-        lam = max(lam_factor * tm, 2.0 * lag)              # желаемая постоянная замкнутого контура (не быстрее 2 задержек: иначе колебания)
+        lam = max(lambda_s if lambda_s else lam_factor * tm, 2.0 * lag)              # желаемая постоянная замкнутого контура (не быстрее 2 задержек: иначе колебания)
         kp = tm / (k_ms * (lam + lag))                     # IMC/лямбда-настройка ПИ для звена 1-го порядка с запаздыванием
         ki = kp / tm
         pi[name] = (min(kp, 3.0), min(ki, 30.0))
     return br, st, sp, ff, pi
 
 
-def report(log, wheel_r, lam_factor):
-    br, st, sp, ff, pi = recommend(log, wheel_r, lam_factor)
+def report(log, wheel_r, lam_factor, lambda_s=None):
+    br, st, sp, ff, pi = recommend(log, wheel_r, lam_factor, lambda_s)
     print("\n=== Результат ===")
     for n in ("L", "R"):
         kv, dz, r2, pts, top = st[n]
@@ -417,6 +417,7 @@ def main():
     r.add_argument("--apply", action="store_true", help="отправить полученные команды на плату")
     for p in (r, sub.add_parser("fit")):
         p.add_argument("--radius", type=float, default=0.065 / 2, help="радиус колеса, м (WHEEL_RADIUS из config.h)")
+        p.add_argument("--lambda-s", type=float, default=None, help="общая для обоих колёс желаемая постоянная замкнутого контура, с (например 0.2); заменяет --lam")
         p.add_argument("--lam", type=float, default=0.5, help="lambda = LAM*Tm: больше - спокойнее ПИ (по умолчанию 0.5)")
     f = sub.choices["fit"]
     f.add_argument("csv")
@@ -428,7 +429,7 @@ def main():
 
     if a.cmd == "fit":
         log = load_csv(a.csv)
-        report(log, a.radius, a.lam)
+        report(log, a.radius, a.lam, a.lambda_s)
         make_plot(log, a)
         return
 
@@ -450,7 +451,7 @@ def main():
         raise
     save_csv(exp.log, a.out)
     print("Лог сохранён: %s (%d отсчётов)" % (a.out, len(exp.log)))
-    cmd_ff, cmd_pi = report(exp.log, a.radius, a.lam)
+    cmd_ff, cmd_pi = report(exp.log, a.radius, a.lam, a.lambda_s)
     make_plot(exp.log, a)
     if a.apply:
         link.send(cmd_ff + "\r\n")

@@ -29,4 +29,7 @@ void telemetryPublish (uint32_t t_us,
 void feedforwardPublish (double gain_L, double deadzone_L,
                          double gain_R, double deadzone_R);
 
+// mmsg type = 6: постоянная времени фильтра уставки, с (ответ на $13)
+void refFilterPublish (double tau_s);
+
 #endif

@@ -101,6 +101,27 @@ int main() {
   run(0.05);
   check(FF_GAIN_L > 0.699f && FF_GAIN_L < 0.701f, "NaN отвергнут");
 
+  printf("5b) $14 - фильтр уставки\n");
+  Serial.tx.clear();
+  cmd("$14;0.2;0#");
+  run(0.05);
+  cmd("$13;#");
+  run(0.05);
+  check(Serial.tx.find("$6;0.20000;#") != std::string::npos, "ответ $6 с новой постоянной");
+  cmd("$14;-5;0#");
+  run(0.05);
+  check(controller.getRefFilter() >= 0.0f, "отрицательная постоянная не принимается");
+  cmd("$14;0.15;0#");
+  run(0.05);
+  cmd("$2;0.2;0.2#");
+  run(0.3);
+  check(controller.getRefLeft() > 0.0f && controller.getRefLeft() < 0.2f * 0.95f, "задание плавно нарастает (не скачок)");
+  for (int i = 0; i < 3; ++i) { run(0.5); cmd("$2;0.2;0.2#"); }   // аварийный стоп через 1 с без команд
+  check(fabsf(controller.getRefLeft() - controller.getTargetLeft()) < 0.01f * controller.getTargetLeft(), "задание сходится к уставке");
+  cmd("$2;0;0#");
+  run(0.05);
+  check(controller.getRefLeft() == 0.0f && controller.getRefRight() == 0.0f, "нулевая уставка сбрасывает задание сразу");
+
   printf("6) старые команды: $1 (twist), $5 (запрос ПИД), мусор\n");
   Serial.tx.clear();
   cmd("$1;0.2;0.0;#");

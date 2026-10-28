@@ -81,3 +81,15 @@ void FlashStorageManager::saveFF(float gainL, float deadzoneL,
     _prefs.putFloat("Dz_R", deadzoneR);
     _prefs.end();
 }
+
+void FlashStorageManager::loadRefTau(float &tauS) {
+    _prefs.begin(_namespace, true);
+    tauS = _prefs.getFloat("RefTau", tauS);
+    _prefs.end();
+}
+
+void FlashStorageManager::saveRefTau(float tauS) {
+    _prefs.begin(_namespace, false);
+    _prefs.putFloat("RefTau", tauS);
+    _prefs.end();
+}

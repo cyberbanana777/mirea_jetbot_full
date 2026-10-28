@@ -23,7 +23,7 @@ MotorController::MotorController(float wheelBase, float maxWheelSpeed, float dt,
     _ffGainL(0.0f), _ffDzL(0.0f), _ffGainR(0.0f), _ffDzR(0.0f),
     _openLoop(false), _openDutyL(0.0f), _openDutyR(0.0f),
     _prevSignL(0), _prevSignR(0),
-    _prevRefL(0), _prevRefR(0), _frozenL(0), _frozenR(0),
+    _refTau(0.0f), _refL(0), _refR(0), _tgtPrevL(0), _tgtPrevR(0), _frozenL(0), _frozenR(0),
     _leftChannel(leftChannel), _rightChannel(rightChannel),
     _invertLeft(invertLeft), _invertRight(invertRight), _minDuty(0.02f)
 
@@ -77,9 +77,6 @@ void MotorController::setTargetVelocity(float linear, float angular) {
   _targetLeft = _cutValue(-limit, limit, rawLeft);
   _targetRight = _cutValue(-limit, limit, rawRight);
 
-  _pidL.setpoint = _targetLeft;
-  _pidR.setpoint = _targetRight;
-
   _openLoop = false;
 }
 
@@ -89,9 +86,6 @@ void MotorController::setWheelSpeeds(float left, float right) {
   // Образка максимальной скорости
   _targetLeft = _cutValue(-limit, limit, left);
   _targetRight = _cutValue(-limit, limit, right);
-
-  _pidL.setpoint = _targetLeft;
-  _pidR.setpoint = _targetRight;
 
   _openLoop = false;
 }
@@ -105,13 +99,18 @@ void MotorController::setOpenLoop(float dutyLeft, float dutyRight) {
   _targetRight = 0.0f;
   _pidL.setpoint = 0.0f;
   _pidR.setpoint = 0.0f;
+  _refL = _refR = 0.0f;
+  _tgtPrevL = _tgtPrevR = 0.0f;
   _pidL.integral = 0.0f;
   _pidR.integral = 0.0f;
   _prevSignL = 0;
   _prevSignR = 0;
-  _prevRefL = _prevRefR = 0.0f;
   _frozenL = _frozenR = 0;
   _openLoop = true;
+}
+
+void MotorController::setRefFilter(float tauSeconds) {
+  _refTau = (tauSeconds > 0.0f) ? tauSeconds : 0.0f;
 }
 
 void MotorController::setFeedforward(float gainL, float deadzoneL, float gainR, float deadzoneR) {
@@ -140,18 +139,22 @@ static const float SETPOINT_STEP_REL = 0.2f;
 // 0 выключает.
 static const float STUCK_RAMP_RATE = 0.3f;
 
+void MotorController::_filterRef(float target, float &ref, float &prevTarget, int16_t &frozenTicks, float alpha) {
+  // Ступенька заданной скорости (по исходной уставке, а не по фильтрованной): новое окно заморозки интеграла
+  if (fabsf(target - prevTarget) > SETPOINT_STEP_REL * fabsf(target) + 0.005f) frozenTicks = 0;
+  prevTarget = target;
+  if (fabsf(target) < SETPOINT_ZERO_EPS) ref = 0.0f;   // остановка без задержки
+  else ref += alpha * (target - ref);
+}
+
 float MotorController::_wheelStep(uPID &pid, float meas, float gain, float deadzone, int8_t &prevSign,
-                                  float &prevRef, int16_t &frozenTicks) {
+                                  int16_t &frozenTicks) {
   const float r = pid.setpoint;
   const int8_t sign = (r > SETPOINT_ZERO_EPS) ? 1 : ((r < -SETPOINT_ZERO_EPS) ? -1 : 0);
 
   // Начало движения или реверс: интеграл прошлого направления не нужен
   if (sign != prevSign) pid.integral = 0.0f;
   prevSign = sign;
-
-  // Ступенька уставки: заморозке интеграла даётся новое окно времени
-  if (fabsf(r - prevRef) > SETPOINT_STEP_REL * fabsf(r) + 0.005f) frozenTicks = 0;
-  prevRef = r;
 
   // Feedforward: сразу выдаёт основную часть управления, ПИ добирает остаток
   const float ff = (sign == 0) ? 0.0f : (float)sign * (deadzone + gain * fabsf(r));
@@ -198,8 +201,16 @@ void MotorController::update(float currentLeftSpeed, float currentRightSpeed) {
     _outputLeft = _openDutyL;
     _outputRight = _openDutyR;
   } else {
-    _outputLeft = _wheelStep(_pidL, _measLeft, _ffGainL, _ffDzL, _prevSignL, _prevRefL, _frozenL);
-    _outputRight = _wheelStep(_pidR, _measRight, _ffGainR, _ffDzR, _prevSignR, _prevRefR, _frozenR);
+    // Фильтр уставки: alpha = dt / (tau + dt), dt в секундах; без фильтра alpha = 1
+    const float dtS = _dt * 0.001f;
+    const float alpha = (_refTau > 0.0f) ? dtS / (_refTau + dtS) : 1.0f;
+    _filterRef(_targetLeft, _refL, _tgtPrevL, _frozenL, alpha);
+    _filterRef(_targetRight, _refR, _tgtPrevR, _frozenR, alpha);
+    _pidL.setpoint = _refL;
+    _pidR.setpoint = _refR;
+
+    _outputLeft = _wheelStep(_pidL, _measLeft, _ffGainL, _ffDzL, _prevSignL, _frozenL);
+    _outputRight = _wheelStep(_pidR, _measRight, _ffGainR, _ffDzR, _prevSignR, _frozenR);
   }
 
   _motorWrite(_leftChannel, _outputLeft);

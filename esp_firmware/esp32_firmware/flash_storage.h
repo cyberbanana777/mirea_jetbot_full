@@ -46,6 +46,13 @@ public:
     void saveFF(float gainL, float deadzoneL, float gainR, float deadzoneR);
 
     /**
+     * Загружает/сохраняет постоянную времени фильтра уставки, с.
+     * Если ключа нет, остаётся переданное значение (заводское из config.h).
+     */
+    void loadRefTau(float &tauS);
+    void saveRefTau(float tauS);
+
+    /**
      * Проверяет, был ли уже выполнен первый запуск (наличие флага nvsInit).
      */
     bool isInitialized();

@@ -1,20 +1,20 @@
-diff -ruN fw_orig/esp32_firmware/command_parser.cpp fw_new/esp32_firmware/command_parser.cpp
---- fw_orig/esp32_firmware/command_parser.cpp	2026-05-07 11:12:02.000000000 +0300
-+++ fw_new/esp32_firmware/command_parser.cpp	2026-10-26 23:18:43.641216925 +0300
+diff -ruN ../fw_orig/esp32_firmware/command_parser.cpp esp32_firmware/command_parser.cpp
+--- ../fw_orig/esp32_firmware/command_parser.cpp	2026-05-07 11:12:02.000000000 +0300
++++ esp32_firmware/command_parser.cpp	2026-10-27 02:11:29.782514522 +0300
 @@ -17,7 +17,8 @@
    }
    if (*p != ';') return cmd;  // нет разделителя
    int rawType = atoi(typeStr);
 -  if (rawType < 1 || rawType > 5) return cmd;
-+  const bool known = (rawType >= 1 && rawType <= 5) || (rawType >= 10 && rawType <= 13);
++  const bool known = (rawType >= 1 && rawType <= 5) || (rawType >= 10 && rawType <= 14);
 +  if (!known) return cmd;
    cmd.type = static_cast<Command>(rawType);
  
    // 2. Извлекаем аргументы до '#'
-diff -ruN fw_orig/esp32_firmware/command_parser.h fw_new/esp32_firmware/command_parser.h
---- fw_orig/esp32_firmware/command_parser.h	2026-05-07 11:11:06.000000000 +0300
-+++ fw_new/esp32_firmware/command_parser.h	2026-10-26 23:18:41.733216968 +0300
-@@ -5,14 +5,19 @@
+diff -ruN ../fw_orig/esp32_firmware/command_parser.h esp32_firmware/command_parser.h
+--- ../fw_orig/esp32_firmware/command_parser.h	2026-05-07 11:11:06.000000000 +0300
++++ esp32_firmware/command_parser.h	2026-10-27 02:11:29.781474976 +0300
+@@ -5,14 +5,20 @@
  #include <Arduino.h>
  #include <stdint.h>
  
@@ -32,21 +32,22 @@ diff -ruN fw_orig/esp32_firmware/command_parser.h fw_new/esp32_firmware/command_
 +  SET_DUTY = 10,         // $10;duty_L;duty_R;#   разомкнутый режим: скважность ШИМ [-1, 1]
 +  SET_FF = 11,           // $11;gain_L;dz_L;gain_R;dz_R;save#  feedforward (save = 1 - записать во flash)
 +  SET_TELEMETRY = 12,    // $12;on;#              телеметрия $3 на 100 Гц, одометрия $1 на паузе
-+  REQUEST_FF = 13        // $13;#                 запросить параметры feedforward ($4)
++  REQUEST_FF = 13,       // $13;#                 запросить параметры feedforward ($4) и фильтр уставки ($6)
++  SET_REF_FILTER = 14    // $14;tau_s;save#       постоянная времени фильтра уставки, с (save = 1 - во flash)
  };
  
  struct ParsedCommand {
-@@ -34,4 +39,4 @@
+@@ -34,4 +40,4 @@
    }
  };
  
 -#endif
 \ No newline at end of file
 +#endif
-diff -ruN fw_orig/esp32_firmware/config.h fw_new/esp32_firmware/config.h
---- fw_orig/esp32_firmware/config.h	2026-10-25 22:12:19.000000000 +0300
-+++ fw_new/esp32_firmware/config.h	2026-10-27 01:09:28.398669550 +0300
-@@ -15,30 +15,80 @@
+diff -ruN ../fw_orig/esp32_firmware/config.h esp32_firmware/config.h
+--- ../fw_orig/esp32_firmware/config.h	2026-10-25 22:12:19.000000000 +0300
++++ esp32_firmware/config.h	2026-10-27 02:11:29.780269858 +0300
+@@ -15,30 +15,85 @@
  const uint8_t PIN_L_A = 32;  // Левое колесо, канал А
  const uint8_t PIN_L_B = 33;  // Левое колесо, канал В
  
@@ -112,6 +113,11 @@ diff -ruN fw_orig/esp32_firmware/config.h fw_new/esp32_firmware/config.h
 +float FF_GAIN_L = 0.5848;
 +float FF_GAIN_R = 0.9133;
 +
++// Фильтр уставки скорости (одинаковый для обоих колёс), постоянная времени, с.
++// Оба колеса отрабатывают одну и ту же плавную траекторию: нет перерегулирования от ступеньки
++// и переходные процессы колёс совпадают. 0 - выключен. Меняется командой $14 без перепрошивки.
++float REF_TAU_S = 0.15;
++
  // === Таймеры ===
 -// Период ПИД-регуляторов (мкс). Коэффициенты ПИД подобраны под этот период.
 -const unsigned long timer_timeout = DT * 1000; //мкс
@@ -144,9 +150,9 @@ diff -ruN fw_orig/esp32_firmware/config.h fw_new/esp32_firmware/config.h
  
  #endif
 \ No newline at end of file
-diff -ruN fw_orig/esp32_firmware/display_manager.cpp fw_new/esp32_firmware/display_manager.cpp
---- fw_orig/esp32_firmware/display_manager.cpp	2026-05-07 22:38:16.000000000 +0300
-+++ fw_new/esp32_firmware/display_manager.cpp	2026-10-26 23:19:11.644003066 +0300
+diff -ruN ../fw_orig/esp32_firmware/display_manager.cpp esp32_firmware/display_manager.cpp
+--- ../fw_orig/esp32_firmware/display_manager.cpp	2026-05-07 22:38:16.000000000 +0300
++++ esp32_firmware/display_manager.cpp	2026-10-26 23:19:11.644003066 +0300
 @@ -25,7 +25,8 @@
  }
  
@@ -196,9 +202,9 @@ diff -ruN fw_orig/esp32_firmware/display_manager.cpp fw_new/esp32_firmware/displ
 +  _flushCol = 0;
  }
 \ No newline at end of file
-diff -ruN fw_orig/esp32_firmware/display_manager.h fw_new/esp32_firmware/display_manager.h
---- fw_orig/esp32_firmware/display_manager.h	2026-05-07 22:38:16.000000000 +0300
-+++ fw_new/esp32_firmware/display_manager.h	2026-10-26 23:19:11.643697552 +0300
+diff -ruN ../fw_orig/esp32_firmware/display_manager.h esp32_firmware/display_manager.h
+--- ../fw_orig/esp32_firmware/display_manager.h	2026-05-07 22:38:16.000000000 +0300
++++ esp32_firmware/display_manager.h	2026-10-26 23:19:11.643697552 +0300
 @@ -18,8 +18,13 @@
  
    // Обновляет содержимое экрана в соответствии с текущим состоянием батареи.
@@ -229,9 +235,9 @@ diff -ruN fw_orig/esp32_firmware/display_manager.h fw_new/esp32_firmware/display
    // Отрисовка одной из двух страниц в зависимости от _showWarning
    void _render(const String& ssid, const String& ip, const String& password,
                 float busVoltage, float current, int batteryPercent);
-diff -ruN fw_orig/esp32_firmware/encoders.cpp fw_new/esp32_firmware/encoders.cpp
---- fw_orig/esp32_firmware/encoders.cpp	2026-10-25 20:56:37.000000000 +0300
-+++ fw_new/esp32_firmware/encoders.cpp	2026-10-26 23:17:13.273218992 +0300
+diff -ruN ../fw_orig/esp32_firmware/encoders.cpp esp32_firmware/encoders.cpp
+--- ../fw_orig/esp32_firmware/encoders.cpp	2026-10-25 20:56:37.000000000 +0300
++++ esp32_firmware/encoders.cpp	2026-10-26 23:17:13.273218992 +0300
 @@ -3,6 +3,11 @@
  
  volatile int32_t Encoders::_leftPos = 0;
@@ -390,9 +396,9 @@ diff -ruN fw_orig/esp32_firmware/encoders.cpp fw_new/esp32_firmware/encoders.cpp
    portEXIT_CRITICAL_ISR(&_mux);
  }
  
-diff -ruN fw_orig/esp32_firmware/encoders.h fw_new/esp32_firmware/encoders.h
---- fw_orig/esp32_firmware/encoders.h	2026-10-25 20:56:37.000000000 +0300
-+++ fw_new/esp32_firmware/encoders.h	2026-10-26 23:16:58.101219339 +0300
+diff -ruN ../fw_orig/esp32_firmware/encoders.h esp32_firmware/encoders.h
+--- ../fw_orig/esp32_firmware/encoders.h	2026-10-25 20:56:37.000000000 +0300
++++ esp32_firmware/encoders.h	2026-10-26 23:16:58.101219339 +0300
 @@ -8,13 +8,24 @@
  class Encoders {
  public:
@@ -430,9 +436,9 @@ diff -ruN fw_orig/esp32_firmware/encoders.h fw_new/esp32_firmware/encoders.h
 -#endif
 \ No newline at end of file
 +#endif
-diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_firmware.ino
---- fw_orig/esp32_firmware/esp32_firmware.ino	2026-10-25 22:12:19.000000000 +0300
-+++ fw_new/esp32_firmware/esp32_firmware.ino	2026-10-26 23:28:15.298238064 +0300
+diff -ruN ../fw_orig/esp32_firmware/esp32_firmware.ino esp32_firmware/esp32_firmware.ino
+--- ../fw_orig/esp32_firmware/esp32_firmware.ino	2026-10-25 22:12:19.000000000 +0300
++++ esp32_firmware/esp32_firmware.ino	2026-10-27 02:11:29.784784690 +0300
 @@ -5,9 +5,9 @@
  /**
    @author Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
@@ -601,8 +607,8 @@ diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_
 +  {
 +    telemetry_div = 0;
 +    telemetryPublish(now,
-+                     controller.getTargetLeft(), left_vel_, controller.getOutputLeft(),
-+                     controller.getTargetRight(), right_vel_, controller.getOutputRight());
++                     controller.getRefLeft(), left_vel_, controller.getOutputLeft(),
++                     controller.getRefRight(), right_vel_, controller.getOutputRight());
 +  }
 +}
 +
@@ -625,13 +631,17 @@ diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_
  
    delay(100);
  
-@@ -291,12 +360,19 @@
+@@ -291,12 +360,23 @@
    flashStorage.loadPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
    controller.setPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
  
 +  // Feedforward: значения из config.h, если калибровка ещё не сохранялась во flash
 +  flashStorage.loadFF(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
 +  controller.setFeedforward(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
++
++  // Фильтр уставки: значение из config.h, если не менялось командой $14 с сохранением
++  flashStorage.loadRefTau(REF_TAU_S);
++  controller.setRefFilter(REF_TAU_S);
 +
    controller.setWheelSpeeds(0.0, 0.0);
  
@@ -646,7 +656,7 @@ diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_
  }
  
  void loop()
-@@ -306,13 +382,32 @@
+@@ -306,13 +386,32 @@
    mainReceiver.update();
    jetsonReceiver.update();
  
@@ -681,7 +691,7 @@ diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_
    unsigned long odom_delta = now - odom_tmr;
  
    // Одометрия: каждые odom_timer_timeout (20 мс, 50 Гц)
-@@ -328,38 +423,14 @@
+@@ -328,38 +427,14 @@
      odometry.update(convert_ticks_to_distance(leftTicks, 'l'),
                      convert_ticks_to_distance(rightTicks, 'r'));
  
@@ -726,7 +736,7 @@ diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_
    }
  
    // Обработка входного значения
-@@ -412,6 +483,39 @@
+@@ -412,6 +487,50 @@
        regulatorsCoefficientsPublish(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
        break;
  
@@ -761,12 +771,23 @@ diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_
 +
 +    case Command::REQUEST_FF:
 +      feedforwardPublish(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
++      refFilterPublish(REF_TAU_S);
++      break;
++
++    case Command::SET_REF_FILTER:
++      if (cmd.count >= 1 && isfinite(cmd.args[0]))
++      {
++        REF_TAU_S = constrain(cmd.args[0], 0.0f, 2.0f);
++        controller.setRefFilter(REF_TAU_S);
++        if (cmd.count >= 2 && cmd.args[1] >= 0.5f)
++          flashStorage.saveRefTau(REF_TAU_S);
++      }
 +      break;
 +
      case Command::UNKNOWN:
        break;
      }
-@@ -424,7 +528,8 @@
+@@ -424,7 +543,8 @@
      parseJetsonMessage(raw_1);
    }
  
@@ -776,7 +797,7 @@ diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_
    {
      update_timer = millis();
      // Чтение напряжения и тока
-@@ -434,16 +539,16 @@
+@@ -434,16 +554,16 @@
      current = shunt_v / 0.1 / 1000;
    }
    // Мониторинг устройств I2C (не чаще 2 секунд)
@@ -796,13 +817,15 @@ diff -ruN fw_orig/esp32_firmware/esp32_firmware.ino fw_new/esp32_firmware/esp32_
    }
  
    // Индикация ошибок во время работы: светодиод часто мигает, пока
-diff -ruN fw_orig/esp32_firmware/flash_storage.cpp fw_new/esp32_firmware/flash_storage.cpp
---- fw_orig/esp32_firmware/flash_storage.cpp	2026-05-07 00:36:32.000000000 +0300
-+++ fw_new/esp32_firmware/flash_storage.cpp	2026-10-26 23:18:53.549216698 +0300
-@@ -59,4 +59,25 @@
+diff -ruN ../fw_orig/esp32_firmware/flash_storage.cpp esp32_firmware/flash_storage.cpp
+--- ../fw_orig/esp32_firmware/flash_storage.cpp	2026-05-07 00:36:32.000000000 +0300
++++ esp32_firmware/flash_storage.cpp	2026-10-27 02:11:29.781155617 +0300
+@@ -59,4 +59,37 @@
      _prefs.putFloat("Kd_L", Kd_L);
      // nvsInit не трогаем – он уже есть после первого begin()
      _prefs.end();
+-}
+\ No newline at end of file
 +}
 +
 +void FlashStorageManager::loadFF(float &gainL, float &deadzoneL,
@@ -824,12 +847,23 @@ diff -ruN fw_orig/esp32_firmware/flash_storage.cpp fw_new/esp32_firmware/flash_s
 +    _prefs.putFloat("Kff_R", gainR);
 +    _prefs.putFloat("Dz_R", deadzoneR);
 +    _prefs.end();
- }
-\ No newline at end of file
-diff -ruN fw_orig/esp32_firmware/flash_storage.h fw_new/esp32_firmware/flash_storage.h
---- fw_orig/esp32_firmware/flash_storage.h	2026-05-06 18:57:43.000000000 +0300
-+++ fw_new/esp32_firmware/flash_storage.h	2026-10-26 23:18:50.069216778 +0300
-@@ -34,6 +34,18 @@
++}
++
++void FlashStorageManager::loadRefTau(float &tauS) {
++    _prefs.begin(_namespace, true);
++    tauS = _prefs.getFloat("RefTau", tauS);
++    _prefs.end();
++}
++
++void FlashStorageManager::saveRefTau(float tauS) {
++    _prefs.begin(_namespace, false);
++    _prefs.putFloat("RefTau", tauS);
++    _prefs.end();
++}
+diff -ruN ../fw_orig/esp32_firmware/flash_storage.h esp32_firmware/flash_storage.h
+--- ../fw_orig/esp32_firmware/flash_storage.h	2026-05-06 18:57:43.000000000 +0300
++++ esp32_firmware/flash_storage.h	2026-10-27 02:11:29.780682483 +0300
+@@ -34,6 +34,25 @@
                   float Kp_R, float Ki_R, float Kd_R);
  
      /**
@@ -845,12 +879,19 @@ diff -ruN fw_orig/esp32_firmware/flash_storage.h fw_new/esp32_firmware/flash_sto
 +    void saveFF(float gainL, float deadzoneL, float gainR, float deadzoneR);
 +
 +    /**
++     * Загружает/сохраняет постоянную времени фильтра уставки, с.
++     * Если ключа нет, остаётся переданное значение (заводское из config.h).
++     */
++    void loadRefTau(float &tauS);
++    void saveRefTau(float tauS);
++
++    /**
       * Проверяет, был ли уже выполнен первый запуск (наличие флага nvsInit).
       */
      bool isInitialized();
-diff -ruN fw_orig/esp32_firmware/motor_controller.cpp fw_new/esp32_firmware/motor_controller.cpp
---- fw_orig/esp32_firmware/motor_controller.cpp	2026-10-25 22:12:19.000000000 +0300
-+++ fw_new/esp32_firmware/motor_controller.cpp	2026-10-27 01:25:34.217029384 +0300
+diff -ruN ../fw_orig/esp32_firmware/motor_controller.cpp esp32_firmware/motor_controller.cpp
+--- ../fw_orig/esp32_firmware/motor_controller.cpp	2026-10-25 22:12:19.000000000 +0300
++++ esp32_firmware/motor_controller.cpp	2026-10-27 02:11:29.779699329 +0300
 @@ -8,8 +8,10 @@
                                   bool invertLeft, bool invertRight)
    : _pwm(0x60)  // адрес PCA9685 по умолчанию
@@ -872,7 +913,7 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.cpp fw_new/esp32_firmware/moto
 +    _ffGainL(0.0f), _ffDzL(0.0f), _ffGainR(0.0f), _ffDzR(0.0f),
 +    _openLoop(false), _openDutyL(0.0f), _openDutyR(0.0f),
 +    _prevSignL(0), _prevSignR(0),
-+    _prevRefL(0), _prevRefR(0), _frozenL(0), _frozenR(0),
++    _refTau(0.0f), _refL(0), _refR(0), _tgtPrevL(0), _tgtPrevR(0), _frozenL(0), _frozenR(0),
      _leftChannel(leftChannel), _rightChannel(rightChannel),
 -    _invertLeft(invertLeft), _invertRight(invertRight), _deathLine(0.35f)
 +    _invertLeft(invertLeft), _invertRight(invertRight), _minDuty(0.02f)
@@ -903,22 +944,25 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.cpp fw_new/esp32_firmware/moto
      return true;
  }
  void MotorController::setTargetVelocity(float linear, float angular) {
-@@ -66,8 +80,7 @@
-   _pidL.setpoint = _targetLeft;
-   _pidR.setpoint = _targetRight;
+@@ -63,11 +77,7 @@
+   _targetLeft = _cutValue(-limit, limit, rawLeft);
+   _targetRight = _cutValue(-limit, limit, rawRight);
  
+-  _pidL.setpoint = _targetLeft;
+-  _pidR.setpoint = _targetRight;
+-
 -  _filterLeft.reset();
 -  _filterRight.reset();
 +  _openLoop = false;
  }
  
  
-@@ -80,21 +93,114 @@
-   _pidL.setpoint = _targetLeft;
-   _pidR.setpoint = _targetRight;
+@@ -77,24 +87,131 @@
+   _targetLeft = _cutValue(-limit, limit, left);
+   _targetRight = _cutValue(-limit, limit, right);
  
--  _filterLeft.reset();
--  _filterRight.reset();
+-  _pidL.setpoint = _targetLeft;
+-  _pidR.setpoint = _targetRight;
 +  _openLoop = false;
 +}
 +
@@ -931,13 +975,18 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.cpp fw_new/esp32_firmware/moto
 +  _targetRight = 0.0f;
 +  _pidL.setpoint = 0.0f;
 +  _pidR.setpoint = 0.0f;
++  _refL = _refR = 0.0f;
++  _tgtPrevL = _tgtPrevR = 0.0f;
 +  _pidL.integral = 0.0f;
 +  _pidR.integral = 0.0f;
 +  _prevSignL = 0;
 +  _prevSignR = 0;
-+  _prevRefL = _prevRefR = 0.0f;
 +  _frozenL = _frozenR = 0;
 +  _openLoop = true;
++}
++
++void MotorController::setRefFilter(float tauSeconds) {
++  _refTau = (tauSeconds > 0.0f) ? tauSeconds : 0.0f;
 +}
 +
 +void MotorController::setFeedforward(float gainL, float deadzoneL, float gainR, float deadzoneR) {
@@ -946,7 +995,9 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.cpp fw_new/esp32_firmware/moto
 +  _ffGainR = gainR;
 +  _ffDzR = deadzoneR;
 +}
-+
+ 
+-  _filterLeft.reset();
+-  _filterRight.reset();
 +// Уставка по модулю ниже этого, м/с, считается нулём: мотор выключен, интегратор сброшен
 +static const float SETPOINT_ZERO_EPS = 0.002f;
 +// Заморозка интеграла при разгоне: пока колесо едет к уставке и ошибка больше этой доли
@@ -966,18 +1017,22 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.cpp fw_new/esp32_firmware/moto
 +// 0 выключает.
 +static const float STUCK_RAMP_RATE = 0.3f;
 +
++void MotorController::_filterRef(float target, float &ref, float &prevTarget, int16_t &frozenTicks, float alpha) {
++  // Ступенька заданной скорости (по исходной уставке, а не по фильтрованной): новое окно заморозки интеграла
++  if (fabsf(target - prevTarget) > SETPOINT_STEP_REL * fabsf(target) + 0.005f) frozenTicks = 0;
++  prevTarget = target;
++  if (fabsf(target) < SETPOINT_ZERO_EPS) ref = 0.0f;   // остановка без задержки
++  else ref += alpha * (target - ref);
++}
++
 +float MotorController::_wheelStep(uPID &pid, float meas, float gain, float deadzone, int8_t &prevSign,
-+                                  float &prevRef, int16_t &frozenTicks) {
++                                  int16_t &frozenTicks) {
 +  const float r = pid.setpoint;
 +  const int8_t sign = (r > SETPOINT_ZERO_EPS) ? 1 : ((r < -SETPOINT_ZERO_EPS) ? -1 : 0);
 +
 +  // Начало движения или реверс: интеграл прошлого направления не нужен
 +  if (sign != prevSign) pid.integral = 0.0f;
 +  prevSign = sign;
-+
-+  // Ступенька уставки: заморозке интеграла даётся новое окно времени
-+  if (fabsf(r - prevRef) > SETPOINT_STEP_REL * fabsf(r) + 0.005f) frozenTicks = 0;
-+  prevRef = r;
 +
 +  // Feedforward: сразу выдаёт основную часть управления, ПИ добирает остаток
 +  const float ff = (sign == 0) ? 0.0f : (float)sign * (deadzone + gain * fabsf(r));
@@ -1033,13 +1088,21 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.cpp fw_new/esp32_firmware/moto
 +    _outputLeft = _openDutyL;
 +    _outputRight = _openDutyR;
 +  } else {
-+    _outputLeft = _wheelStep(_pidL, _measLeft, _ffGainL, _ffDzL, _prevSignL, _prevRefL, _frozenL);
-+    _outputRight = _wheelStep(_pidR, _measRight, _ffGainR, _ffDzR, _prevSignR, _prevRefR, _frozenR);
++    // Фильтр уставки: alpha = dt / (tau + dt), dt в секундах; без фильтра alpha = 1
++    const float dtS = _dt * 0.001f;
++    const float alpha = (_refTau > 0.0f) ? dtS / (_refTau + dtS) : 1.0f;
++    _filterRef(_targetLeft, _refL, _tgtPrevL, _frozenL, alpha);
++    _filterRef(_targetRight, _refR, _tgtPrevR, _frozenR, alpha);
++    _pidL.setpoint = _refL;
++    _pidR.setpoint = _refR;
++
++    _outputLeft = _wheelStep(_pidL, _measLeft, _ffGainL, _ffDzL, _prevSignL, _frozenL);
++    _outputRight = _wheelStep(_pidR, _measRight, _ffGainR, _ffDzR, _prevSignR, _frozenR);
 +  }
  
    _motorWrite(_leftChannel, _outputLeft);
    _motorWrite(_rightChannel, _outputRight);
-@@ -113,34 +219,40 @@
+@@ -113,34 +230,40 @@
  
  }
  
@@ -1098,16 +1161,16 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.cpp fw_new/esp32_firmware/moto
  }
  
  float_t MotorController::_cutValue(float_t min, float_t max, float_t value) {
-@@ -151,4 +263,4 @@
+@@ -151,4 +274,4 @@
    } else {
      return value;
    }
 -}
 \ No newline at end of file
 +}
-diff -ruN fw_orig/esp32_firmware/motor_controller.h fw_new/esp32_firmware/motor_controller.h
---- fw_orig/esp32_firmware/motor_controller.h	2026-05-07 22:38:16.000000000 +0300
-+++ fw_new/esp32_firmware/motor_controller.h	2026-10-27 01:25:34.220559362 +0300
+diff -ruN ../fw_orig/esp32_firmware/motor_controller.h esp32_firmware/motor_controller.h
+--- ../fw_orig/esp32_firmware/motor_controller.h	2026-05-07 22:38:16.000000000 +0300
++++ esp32_firmware/motor_controller.h	2026-10-27 02:11:29.774909377 +0300
 @@ -5,7 +5,6 @@
  #include <Arduino.h>
  #include <Adafruit_PWMServoDriver.h>
@@ -1125,7 +1188,7 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.h fw_new/esp32_firmware/motor_
       * @param kpL, kiL, kdL  - коэффициенты ПИД для левого колеса
       * @param kpR, kiR, kdR  - коэффициенты ПИД для правого колеса
       * @param leftChannel    - базовый канал PCA9685 для левого мотора (по умолч. 0x00)
-@@ -38,10 +37,21 @@
+@@ -38,10 +37,28 @@
      // Прямая установка скоростей колёс (м/с)
      void setWheelSpeeds(float left, float right);
  
@@ -1135,6 +1198,13 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.h fw_new/esp32_firmware/motor_
 +    // возвращает замкнутый режим.
 +    void setOpenLoop(float dutyLeft, float dutyRight);
 +    bool isOpenLoop() const { return _openLoop; }
++
++    // Фильтр уставки: одинаковый для обоих колёс фильтр первого порядка (постоянная времени, с).
++    // Оба колеса отслеживают одну и ту же плавную траекторию, поэтому ступенька задания не даёт
++    // перерегулирования и переходные процессы колёс совпадают, даже если двигатели разные.
++    // 0 - без фильтра. Нулевая уставка (остановка, в том числе аварийная) проходит без задержки.
++    void setRefFilter(float tauSeconds);
++    float getRefFilter() const { return _refTau; }
 +
 +    // Feedforward: u_ff = sign(v) * (deadzone + gain * |v|), скважность ШИМ
 +    // gain - скважность на 1 м/с, deadzone - скважность, с которой колесо трогается
@@ -1150,12 +1220,16 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.h fw_new/esp32_firmware/motor_
       */
      void update(float currentLeftSpeed, float currentRightSpeed);
  
-@@ -49,22 +59,21 @@
+@@ -49,22 +66,25 @@
      float getTargetLeft() const  { return _targetLeft; }
      float getTargetRight() const { return _targetRight; }
  
 -    float getFilteredLeft() const  { return _filteredLeft; }
 -    float getFilteredRight() const { return _filteredRight; }
++    // Уставки после фильтра (то, что реально отрабатывает регулятор), м/с
++    float getRefLeft() const  { return _refL; }
++    float getRefRight() const { return _refR; }
++
 +    // Измеренные скорости колёс (м/с), как их видит регулятор
 +    float getFilteredLeft() const  { return _measLeft; }
 +    float getFilteredRight() const { return _measRight; }
@@ -1177,30 +1251,28 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.h fw_new/esp32_firmware/motor_
  
      float _wheelBase;
      float _maxWheelSpeed;
-@@ -75,16 +84,28 @@
+@@ -75,16 +95,33 @@
  
      float _targetLeft, _targetRight;
      float _outputLeft, _outputRight;
 -    float _filteredLeft, _filteredRight;
 +    float _measLeft, _measRight;
- 
--    uint8_t _leftChannel, _rightChannel;
--    bool _invertLeft, _invertRight;
--    float _deathLine;
++
 +    // Feedforward
 +    float _ffGainL, _ffDzL, _ffGainR, _ffDzR;
- 
++
 +    bool _openLoop;
 +    float _openDutyL, _openDutyR;
 +    int8_t _prevSignL, _prevSignR; // знак уставки на прошлом такте (сброс интегратора при реверсе)
-+    float _prevRefL, _prevRefR;    // уставка на прошлом такте (обнаружение ступеньки)
++    float _refTau;                 // постоянная времени фильтра уставки, с
++    float _refL, _refR;            // уставки после фильтра, м/с
++    float _tgtPrevL, _tgtPrevR;    // заданная скорость на прошлом такте (обнаружение ступеньки)
 +    int16_t _frozenL, _frozenR;    // сколько тактов подряд интеграл заморожен при разгоне
  
--    // Вспомогательная функция масштабирования с ограничением
--    static float _mapFloat(float value, float fromLow, float fromHigh,
--                           float toLow, float toHigh);
-+    uint8_t _leftChannel, _rightChannel;
-+    bool _invertLeft, _invertRight;
+     uint8_t _leftChannel, _rightChannel;
+     bool _invertLeft, _invertRight;
+-    float _deathLine;
+-
 +    // Скважность ниже этой не подаётся на мотор (не пищать и не греть впустую)
 +    float _minDuty;
 +    // Какая сторона моста включена в последний раз: -1 назад, 0 выкл, +1 вперёд,
@@ -1209,24 +1281,32 @@ diff -ruN fw_orig/esp32_firmware/motor_controller.h fw_new/esp32_firmware/motor_
 +
 +    // Один такт для одного колеса: feedforward + ПИ, возвращает скважность [-1, 1]
 +    float _wheelStep(uPID &pid, float meas, float gain, float deadzone, int8_t &prevSign,
-+                     float &prevRef, int16_t &frozenTicks);
++                     int16_t &frozenTicks);
+ 
+-    // Вспомогательная функция масштабирования с ограничением
+-    static float _mapFloat(float value, float fromLow, float fromHigh,
+-                           float toLow, float toHigh);
++    // Фильтр уставки одного колеса: target -> ref; сообщает о ступеньке заданной скорости
++    void _filterRef(float target, float &ref, float &prevTarget, int16_t &frozenTicks, float alpha);
  
      // Низкоуровневая запись на мотор
      void _motorWrite(uint8_t channel, float speed);
-@@ -93,4 +114,4 @@
+@@ -93,4 +130,4 @@
      float_t _cutValue(float_t min, float_t max, float_t value);
  };
  
 -#endif
 \ No newline at end of file
 +#endif
-diff -ruN fw_orig/esp32_firmware/protocol_wrapper.cpp fw_new/esp32_firmware/protocol_wrapper.cpp
---- fw_orig/esp32_firmware/protocol_wrapper.cpp	2026-05-07 10:50:20.000000000 +0300
-+++ fw_new/esp32_firmware/protocol_wrapper.cpp	2026-10-26 23:18:36.953217078 +0300
-@@ -23,4 +23,29 @@
+diff -ruN ../fw_orig/esp32_firmware/protocol_wrapper.cpp esp32_firmware/protocol_wrapper.cpp
+--- ../fw_orig/esp32_firmware/protocol_wrapper.cpp	2026-05-07 10:50:20.000000000 +0300
++++ esp32_firmware/protocol_wrapper.cpp	2026-10-27 02:11:29.783318538 +0300
+@@ -23,4 +23,37 @@
      if (len > 0 && len < (int)sizeof(buf)) {
          Serial.write(buf, len);
      }
+-}
+\ No newline at end of file
 +}
 +
 +void telemetryPublish(uint32_t t_us,
@@ -1252,12 +1332,19 @@ diff -ruN fw_orig/esp32_firmware/protocol_wrapper.cpp fw_new/esp32_firmware/prot
 +    if (len > 0 && len < (int)sizeof(buf)) {
 +        Serial.write(buf, len);
 +    }
- }
-\ No newline at end of file
-diff -ruN fw_orig/esp32_firmware/protocol_wrapper.h fw_new/esp32_firmware/protocol_wrapper.h
---- fw_orig/esp32_firmware/protocol_wrapper.h	2026-05-06 13:42:09.000000000 +0300
-+++ fw_new/esp32_firmware/protocol_wrapper.h	2026-10-26 23:18:32.229217186 +0300
-@@ -18,4 +18,15 @@
++}
++
++void refFilterPublish(double tau_s) {
++    static char buf[40];
++    int len = snprintf(buf, sizeof(buf), "$6;%.5f;#\r\n", tau_s);
++    if (len > 0 && len < (int)sizeof(buf)) {
++        Serial.write(buf, len);
++    }
++}
+diff -ruN ../fw_orig/esp32_firmware/protocol_wrapper.h esp32_firmware/protocol_wrapper.h
+--- ../fw_orig/esp32_firmware/protocol_wrapper.h	2026-05-06 13:42:09.000000000 +0300
++++ esp32_firmware/protocol_wrapper.h	2026-10-27 02:11:29.782886812 +0300
+@@ -18,4 +18,18 @@
  void regulatorsCoefficientsPublish (double Kp_L, double Ki_L, double Kd_L,
                                      double Kp_R, double Ki_R, double Kd_R);
  
@@ -1272,11 +1359,14 @@ diff -ruN fw_orig/esp32_firmware/protocol_wrapper.h fw_new/esp32_firmware/protoc
 +void feedforwardPublish (double gain_L, double deadzone_L,
 +                         double gain_R, double deadzone_R);
 +
++// mmsg type = 6: постоянная времени фильтра уставки, с (ответ на $13)
++void refFilterPublish (double tau_s);
++
  #endif
 \ No newline at end of file
-diff -ruN fw_orig/esp32_firmware/speed_estimator.h fw_new/esp32_firmware/speed_estimator.h
---- fw_orig/esp32_firmware/speed_estimator.h	1970-01-01 03:00:00.000000000 +0300
-+++ fw_new/esp32_firmware/speed_estimator.h	2026-10-26 23:25:52.191461277 +0300
+diff -ruN ../fw_orig/esp32_firmware/speed_estimator.h esp32_firmware/speed_estimator.h
+--- ../fw_orig/esp32_firmware/speed_estimator.h	1970-01-01 03:00:00.000000000 +0300
++++ esp32_firmware/speed_estimator.h	2026-10-26 23:25:52.191461277 +0300
 @@ -0,0 +1,132 @@
 +// Copyright (c) 2026 Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
 +// SPDX-License-Identifier: MIT

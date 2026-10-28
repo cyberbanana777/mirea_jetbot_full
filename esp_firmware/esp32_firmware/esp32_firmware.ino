@@ -324,8 +324,8 @@ void controlStep()
   {
     telemetry_div = 0;
     telemetryPublish(now,
-                     controller.getTargetLeft(), left_vel_, controller.getOutputLeft(),
-                     controller.getTargetRight(), right_vel_, controller.getOutputRight());
+                     controller.getRefLeft(), left_vel_, controller.getOutputLeft(),
+                     controller.getRefRight(), right_vel_, controller.getOutputRight());
   }
 }
 
@@ -363,6 +363,10 @@ void setup()
   // Feedforward: значения из config.h, если калибровка ещё не сохранялась во flash
   flashStorage.loadFF(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
   controller.setFeedforward(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
+
+  // Фильтр уставки: значение из config.h, если не менялось командой $14 с сохранением
+  flashStorage.loadRefTau(REF_TAU_S);
+  controller.setRefFilter(REF_TAU_S);
 
   controller.setWheelSpeeds(0.0, 0.0);
 
@@ -514,6 +518,17 @@ void loop()
 
     case Command::REQUEST_FF:
       feedforwardPublish(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
+      refFilterPublish(REF_TAU_S);
+      break;
+
+    case Command::SET_REF_FILTER:
+      if (cmd.count >= 1 && isfinite(cmd.args[0]))
+      {
+        REF_TAU_S = constrain(cmd.args[0], 0.0f, 2.0f);
+        controller.setRefFilter(REF_TAU_S);
+        if (cmd.count >= 2 && cmd.args[1] >= 0.5f)
+          flashStorage.saveRefTau(REF_TAU_S);
+      }
       break;
 
     case Command::UNKNOWN:
