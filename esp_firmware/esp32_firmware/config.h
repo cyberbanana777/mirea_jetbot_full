@@ -2,7 +2,7 @@
 #define CONFIG_H
 //Константы физических параметров
 const float Pi = 3.14159;
-const float WHEEL_BASE = 0.1775;  // длина базы
+const float WHEEL_BASE = 0.117;  // длина базы
 const float WHEEL_RADIUS = 0.065/2.0; // радиус ведущего колеса
 const float max_voltage = 4.2 * 3;
 const float min_voltage = 3.3 * 3;
