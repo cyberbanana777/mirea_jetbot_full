@@ -183,7 +183,7 @@
     <joint name="lidar_joint" type="fixed">
         <parent link="base_link"/>
         <child link="lidar_link"/>
-        <origin xyz="0.07 0.0 ${base_height/2 + lidar_height/2}" rpy="0 0 0"/>  <!-- Поворот на -90° вокруг X -->
+        <origin xyz="0.07 0.0 ${base_height/2 + lidar_height/2}" rpy="0 0 2.3562"/> 
 
     </joint>
 

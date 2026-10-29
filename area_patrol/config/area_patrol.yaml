@@ -1,0 +1,19 @@
+area_patrol:
+  ros__parameters:
+    mode: "random"                 # random | circle | square (можно переопределить: mode:=circle)
+    area_file: "~/.ros/area_patrol/area.yaml"   # сюда сохраняется обведённая область
+    load_saved_area: true          # при старте взять сохранённую область, если она есть
+    close_distance: 0.2            # м: клик ближе к первой вершине замыкает область
+
+    edge_margin: 0.1               # м: отступ целей / фигуры от границы области
+    max_cost: 50                   # global costmap 0..100: дороже — слишком близко к препятствию
+    min_goal_distance: 0.5         # м: random — не выбирать цель вплотную к роботу
+    max_path_checks: 10            # random — сколько кандидатов проверять планировщиком за раз
+
+    shape_radius: 0.0              # м: радиус круга / описанного круга квадрата; 0 — максимальный
+    circle_points: 12              # точек на круге
+    square_points_per_side: 2      # точек на сторону квадрата (с углом)
+
+    goal_timeout: 180.0            # с: на одну цель или один круг, потом отмена
+    pause_between_goals: 1.0       # с
+    costmap_topic: "/global_costmap/costmap"
