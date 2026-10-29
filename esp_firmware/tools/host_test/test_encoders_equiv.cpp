@@ -48,7 +48,20 @@ int main() {
   for (int k = 0; k < 4; ++k) { g_micros += 100; g_pins[seqA[k]] ^= 1; (seqA[k] == 34 ? Encoders::_readR_A : Encoders::_readR_B)(); }
   int32_t t1; uint32_t tt1; Encoders::snapshotRight(t1, tt1);
   printf("цикл 11->01->00->10->11: total изменился на %d, время последнего фронта %u (g_micros=%lu)\n", t1 - t0, tt1, g_micros);
-  const bool ok = (mism == 0) && (t1 - t0 == 4) && (tt1 == (uint32_t)g_micros);
+  const bool lastOk = (tt1 == (uint32_t)g_micros);
+  // Время по типам фронтов: после 4 фронтов вперёд все 4 записи свежие (с шагом 100 мкс),
+  // запись последнего фронта = время последнего фронта; назад - тот же фронт получает тот же id
+  int32_t tp; uint32_t ph[4]; int8_t dir;
+  Encoders::snapshotRightPhases(tp, ph, dir);
+  bool phOk = (dir == 1) && (ph[(uint32_t)tp & 3u] == tt1);
+  for (int k = 1; k < 4; ++k) phOk = phOk && (ph[(uint32_t)(tp - k) & 3u] == tt1 - 100u * k);
+  // шаг назад через последний фронт: позиция tp -> tp-1, id того же фронта = tp
+  g_micros += 100; g_pins[seqA[3]] ^= 1; (seqA[3] == 34 ? Encoders::_readR_A : Encoders::_readR_B)();
+  int32_t tq; uint32_t pq[4]; int8_t dq;
+  Encoders::snapshotRightPhases(tq, pq, dq);
+  phOk = phOk && (tq == tp - 1) && (dq == -1) && (pq[(uint32_t)tp & 3u] == (uint32_t)g_micros);
+  printf("время по типам фронтов (вперёд и шаг назад): %s\n", phOk ? "верно" : "ОШИБКА");
+  const bool ok = (mism == 0) && (t1 - t0 == 4) && lastOk && phOk;
   printf("%s\n", ok ? "PASS" : "FAIL");
   return ok ? 0 : 1;
 }

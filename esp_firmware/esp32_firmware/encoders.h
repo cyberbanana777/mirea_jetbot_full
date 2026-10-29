@@ -19,6 +19,12 @@ public:
   static void snapshotLeft(int32_t &total, uint32_t &lastEdgeUs);
   static void snapshotRight(int32_t &total, uint32_t &lastEdgeUs);
 
+  // То же плюс время последнего фронта каждого из 4 типов (phaseUs[id & 3], id = большая из
+  // позиций до и после фронта) и направление последнего фронта: для окна из целых меток
+  // (MTSpeedEstimator::updateAligned).
+  static void snapshotLeftPhases(int32_t &total, uint32_t phaseUs[4], int8_t &lastDir);
+  static void snapshotRightPhases(int32_t &total, uint32_t phaseUs[4], int8_t &lastDir);
+
 private:
   static volatile int32_t _leftPos;
   static volatile int32_t _rightPos;
@@ -26,6 +32,10 @@ private:
   static volatile int32_t _rightTotal;
   static volatile uint32_t _leftLastUs;
   static volatile uint32_t _rightLastUs;
+  static volatile uint32_t _leftPhaseUs[4];
+  static volatile uint32_t _rightPhaseUs[4];
+  static volatile int8_t _leftDir;
+  static volatile int8_t _rightDir;
   static volatile bool _ReadPIN_L_A_A;
   static volatile bool _ReadPIN_L_A_B;
   static volatile bool _ReadPIN_L_B_A;

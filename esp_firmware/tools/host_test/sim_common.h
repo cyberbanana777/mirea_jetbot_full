@@ -35,6 +35,8 @@ struct Wheel {
 struct EdgeSim {
   int32_t edges = 0;     // накопленная позиция, фронтов
   uint32_t tLast = 0;    // время последнего фронта, мкс
+  uint32_t ph[4] = {0, 0, 0, 0};  // время последнего фронта каждого типа (id & 3), как в encoders.cpp
+  int8_t dir = 1;        // направление последнего фронта
   double asym = 0.0;
   static double pat(int k) { static const double e[4] = {0.0, 1.0, -0.5, 0.5}; return e[k & 3]; }
   double pos(int k) const { return k + asym * pat(k); }
@@ -45,10 +47,12 @@ struct EdgeSim {
     while (x1 >= pos(edges + 1)) {
       const double f = (pos(edges + 1) - x0) / (x1 - x0);
       ++edges; tLast = (uint32_t)(t0_us + std::max(0.0, std::min(1.0, f)) * dt_us);
+      ph[(uint32_t)edges & 3u] = tLast; dir = 1;
     }
     while (x1 < pos(edges)) {
       const double f = (pos(edges) - x0) / (x1 - x0);
       --edges; tLast = (uint32_t)(t0_us + std::max(0.0, std::min(1.0, f)) * dt_us);
+      ph[(uint32_t)(edges + 1) & 3u] = tLast; dir = -1;
     }
   }
 };

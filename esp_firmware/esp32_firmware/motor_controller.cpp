@@ -24,6 +24,7 @@ MotorController::MotorController(float wheelBase, float maxWheelSpeed, float dt,
     _openLoop(false), _openDutyL(0.0f), _openDutyR(0.0f),
     _prevSignL(0), _prevSignR(0),
     _refTau(0.0f), _refL(0), _refR(0), _tgtPrevL(0), _tgtPrevR(0), _frozenL(0), _frozenR(0),
+    _mode(ControlMode::kPi), _wc(5.0f), _wo(25.0f), _b0L(10.0f), _b0R(10.0f), _adrcFf(0),
     _leftChannel(leftChannel), _rightChannel(rightChannel),
     _invertLeft(invertLeft), _invertRight(invertRight), _minDuty(0.02f)
 
@@ -106,6 +107,8 @@ void MotorController::setOpenLoop(float dutyLeft, float dutyRight) {
   _prevSignL = 0;
   _prevSignR = 0;
   _frozenL = _frozenR = 0;
+  _esoL = Eso();
+  _esoR = Eso();
   _openLoop = true;
 }
 
@@ -193,6 +196,114 @@ float MotorController::_wheelStep(uPID &pid, float meas, float gain, float deadz
   return _cutValue(-1.0f, 1.0f, ff + pi);
 }
 
+// ---------------------------------------------------------------------------------------------
+// LADRC (линейный ADRC первого порядка, параметризация через полосы, Z. Gao 2003)
+//
+// Модель колеса: dv/dt = b0*u + f. Всё, что не b0*u (инерция -v/Tm, мёртвая зона и трение,
+// нагрузка, ошибка модели), собрано в "суммарное возмущение" f, которое считается медленно
+// меняющимся. Наблюдатель расширенного состояния (ESO), метод Эйлера, шаг h = dt:
+//   e  = v_изм - z1
+//   z1 += h * (z2 + b0*u + 2*wo*e)        // beta1 = 2*wo
+//   z2 += h * (wo^2 * e)                  // beta2 = wo^2: оба полюса ошибки оценки в -wo
+// Закон управления: u = (wc*(r - z1) - z2) / b0. Если оценка точна, dv/dt = wc*(r - v),
+// то есть замкнутый контур - апериодическое звено с постоянной времени 1/wc для любого колеса.
+// В наблюдатель подаётся РЕАЛЬНО поданная (ограниченная) скважность: при насыщении он не
+// "думает", что мотор получил больше, и оценка f не забрасывается (естественный антивиндап).
+// Необязательная прямая подача по калибровке feedforward (setAdrc, ffMode 1/2) не меняет
+// структуру: наблюдатель просто оценивает меньший остаток, и старт с места не ждёт, пока он
+// "найдёт" мёртвую зону. Интеграла ошибки здесь нет, поэтому FF не даёт перерегулирования ПИ.
+// ---------------------------------------------------------------------------------------------
+
+int8_t MotorController::_signOf(float r) {
+  return (r > SETPOINT_ZERO_EPS) ? 1 : ((r < -SETPOINT_ZERO_EPS) ? -1 : 0);
+}
+
+float MotorController::_adrcFeedforward(float ref, float gain, float deadzone) const {
+  const int8_t sign = _signOf(ref);
+  if (!sign || _adrcFf == 0) return 0.0f;
+  if (_adrcFf == 1) return (float)sign * deadzone;
+  return (float)sign * (deadzone + gain * fabsf(ref));
+}
+
+float MotorController::_wheelStepAdrc(float ref, float meas, float b0, float gain, float deadzone, int8_t &prevSign,
+                                      Eso &eso) {
+  const int8_t sign = _signOf(ref);
+
+  // Старт, реверс или остановка: оценки прошлого направления не нужны (как сброс интеграла у ПИ).
+  // z2 = 0: возмущение (в чистом режиме - и мёртвую зону) наблюдатель найдёт заново.
+  if (sign != prevSign) {
+    eso.z1 = meas;
+    eso.z2 = 0.0f;
+    eso.u = 0.0f;
+  }
+  prevSign = sign;
+  if (sign == 0) {
+    eso.z1 = meas;
+    eso.z2 = 0.0f;
+    eso.u = 0.0f;
+    return 0.0f;
+  }
+
+  const float h = _dt * 0.001f;
+  // Прямая подача по калибровке: объект видит u = ff + u_eso, т.е. dv/dt = b0*u_eso + (f + b0*ff),
+  // и наблюдатель оценивает только остаток, который калибровка не объяснила
+  const float ff = _adrcFeedforward(ref, gain, deadzone);
+
+  // Наблюдатель: прогноз по модели + поправка по расхождению с измерением
+  const float e = meas - eso.z1;
+  eso.z1 += h * (eso.z2 + b0 * eso.u + 2.0f * _wo * e);
+  eso.z2 += h * (_wo * _wo * e);
+
+  // Закон управления
+  const float u = _cutValue(-1.0f, 1.0f, ff + (_wc * (ref - eso.z1) - eso.z2) / b0);
+  eso.u = u - ff;
+  return u;
+}
+
+void MotorController::_seedAdrc(Eso &eso, float ref, float meas, float uPrev, float b0, float gain, float deadzone) {
+  const float ff = _adrcFeedforward(ref, gain, deadzone);
+  // z1 = v, а z2 подобран так, что ff + (wc*(r - z1) - z2)/b0 = uPrev
+  eso.z1 = meas;
+  eso.u = uPrev - ff;
+  eso.z2 = _wc * (ref - meas) - b0 * eso.u;
+}
+
+void MotorController::_seedPi(uPID &pid, float ref, float meas, float uPrev, float gain, float deadzone,
+                              int16_t &frozenTicks) {
+  const int8_t sign = _signOf(ref);
+  const float ff = sign ? (float)sign * (deadzone + gain * fabsf(ref)) : 0.0f;
+  // uPID: выход = Kp*e + Ki*integral (Kd = 0), подбираем integral так, чтобы ff + выход = uPrev
+  pid.integral = (pid.Ki > 1e-6f) ? (uPrev - ff - pid.Kp * (ref - meas)) / pid.Ki : 0.0f;
+  frozenTicks = INT_FREEZE_MAX_TICKS;   // заморозка разгона не нужна: переход не ступенька
+}
+
+void MotorController::setControlMode(ControlMode mode) {
+  if (mode == _mode) return;
+  if (!_openLoop) {
+    if (mode == ControlMode::kLadrc) {
+      _seedAdrc(_esoL, _refL, _measLeft, _outputLeft, _b0L, _ffGainL, _ffDzL);
+      _seedAdrc(_esoR, _refR, _measRight, _outputRight, _b0R, _ffGainR, _ffDzR);
+    } else {
+      _seedPi(_pidL, _refL, _measLeft, _outputLeft, _ffGainL, _ffDzL, _frozenL);
+      _seedPi(_pidR, _refR, _measRight, _outputRight, _ffGainR, _ffDzR, _frozenR);
+    }
+  }
+  _mode = mode;
+}
+
+void MotorController::setAdrc(float wc, float wo, float b0L, float b0R, uint8_t ffMode) {
+  _wc = (wc > 0.1f) ? wc : 0.1f;
+  _wo = (wo > 0.1f) ? wo : 0.1f;
+  _b0L = (b0L > 0.1f) ? b0L : 0.1f;
+  _b0R = (b0R > 0.1f) ? b0R : 0.1f;
+  _adrcFf = (ffMode > 2) ? 2 : ffMode;
+  // Новые параметры на ходу: переподобрать z2 так, чтобы скважность не скакнула
+  if (_mode == ControlMode::kLadrc && !_openLoop) {
+    if (_signOf(_refL)) _seedAdrc(_esoL, _refL, _measLeft, _outputLeft, _b0L, _ffGainL, _ffDzL);
+    if (_signOf(_refR)) _seedAdrc(_esoR, _refR, _measRight, _outputRight, _b0R, _ffGainR, _ffDzR);
+  }
+}
+
 void MotorController::update(float currentLeftSpeed, float currentRightSpeed) {
   _measLeft = currentLeftSpeed;
   _measRight = currentRightSpeed;
@@ -209,8 +320,13 @@ void MotorController::update(float currentLeftSpeed, float currentRightSpeed) {
     _pidL.setpoint = _refL;
     _pidR.setpoint = _refR;
 
-    _outputLeft = _wheelStep(_pidL, _measLeft, _ffGainL, _ffDzL, _prevSignL, _frozenL);
-    _outputRight = _wheelStep(_pidR, _measRight, _ffGainR, _ffDzR, _prevSignR, _frozenR);
+    if (_mode == ControlMode::kLadrc) {
+      _outputLeft = _wheelStepAdrc(_refL, _measLeft, _b0L, _ffGainL, _ffDzL, _prevSignL, _esoL);
+      _outputRight = _wheelStepAdrc(_refR, _measRight, _b0R, _ffGainR, _ffDzR, _prevSignR, _esoR);
+    } else {
+      _outputLeft = _wheelStep(_pidL, _measLeft, _ffGainL, _ffDzL, _prevSignL, _frozenL);
+      _outputRight = _wheelStep(_pidR, _measRight, _ffGainR, _ffDzR, _prevSignR, _frozenR);
+    }
   }
 
   _motorWrite(_leftChannel, _outputLeft);

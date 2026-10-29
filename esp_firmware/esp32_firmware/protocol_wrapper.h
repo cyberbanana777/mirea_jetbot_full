@@ -32,4 +32,11 @@ void feedforwardPublish (double gain_L, double deadzone_L,
 // mmsg type = 6: постоянная времени фильтра уставки, с (ответ на $13)
 void refFilterPublish (double tau_s);
 
+// mmsg type = 7: выбранный регулятор и параметры LADRC (ответ на $13 и $17)
+// $7;mode;wc;wo;b0_L;b0_R;ff;#   mode: 0 - ПИ, 1 - LADRC; ff: 0 - без прямой подачи, 1 - мёртвая зона, 2 - полный FF
+void adrcPublish (int mode, double wc, double wo, double b0_L, double b0_R, int ff);
+
+// mmsg type = 8: окно оценки скорости (ответ на $18): $8;min_edges;align;#. Отладка шума скорости (tools/noisetest.py)
+void speedWindowPublish (int min_edges, int align);
+
 #endif

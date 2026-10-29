@@ -53,6 +53,15 @@ public:
     void saveRefTau(float tauS);
 
     /**
+     * Загружает/сохраняет выбранный регулятор (0 - ПИ, 1 - LADRC) и параметры LADRC.
+     * Если ключей нет, остаются переданные значения (заводские из config.h).
+     */
+    void loadCtrlMode(int &mode);
+    void saveCtrlMode(int mode);
+    void loadAdrc(float &wc, float &wo, float &b0L, float &b0R, float &ffMode);
+    void saveAdrc(float wc, float wo, float b0L, float b0R, float ffMode);
+
+    /**
      * Проверяет, был ли уже выполнен первый запуск (наличие флага nvsInit).
      */
     bool isInitialized();

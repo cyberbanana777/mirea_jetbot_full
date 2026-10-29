@@ -93,3 +93,35 @@ void FlashStorageManager::saveRefTau(float tauS) {
     _prefs.putFloat("RefTau", tauS);
     _prefs.end();
 }
+
+void FlashStorageManager::loadCtrlMode(int &mode) {
+    _prefs.begin(_namespace, true);
+    mode = _prefs.getInt("CtrlMode", mode);
+    _prefs.end();
+}
+
+void FlashStorageManager::saveCtrlMode(int mode) {
+    _prefs.begin(_namespace, false);
+    _prefs.putInt("CtrlMode", mode);
+    _prefs.end();
+}
+
+void FlashStorageManager::loadAdrc(float &wc, float &wo, float &b0L, float &b0R, float &ffMode) {
+    _prefs.begin(_namespace, true);
+    wc = _prefs.getFloat("AdrcWc", wc);
+    wo = _prefs.getFloat("AdrcWo", wo);
+    b0L = _prefs.getFloat("AdrcB0L", b0L);
+    b0R = _prefs.getFloat("AdrcB0R", b0R);
+    ffMode = _prefs.getFloat("AdrcFf", ffMode);
+    _prefs.end();
+}
+
+void FlashStorageManager::saveAdrc(float wc, float wo, float b0L, float b0R, float ffMode) {
+    _prefs.begin(_namespace, false);
+    _prefs.putFloat("AdrcWc", wc);
+    _prefs.putFloat("AdrcWo", wo);
+    _prefs.putFloat("AdrcB0L", b0L);
+    _prefs.putFloat("AdrcB0R", b0R);
+    _prefs.putFloat("AdrcFf", ffMode);
+    _prefs.end();
+}

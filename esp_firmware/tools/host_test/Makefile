@@ -6,7 +6,7 @@ CXX ?= g++
 CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter
 STUBS = -Istubs -I$(UPID_DIR)
 
-all: sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue
+all: test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue
 
 sim_new: sim_new.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_new.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
@@ -20,11 +20,17 @@ sim_floor: sim_floor.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controll
 sim_sync: sim_sync.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_sync.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
 
+sim_ladrc: sim_ladrc.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
+	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_ladrc.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
+
 sim_sweep: sim_sweep.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_sweep.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
 
 sim_old: sim_old.cpp sim_run.h sim_common.h orig/motor_controller.cpp stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -Iorig -I. sim_old.cpp orig/motor_controller.cpp stubs/stubs.cpp -o $@
+
+test_estimator_aligned: test_estimator_aligned.cpp sim_common.h $(FW)/speed_estimator.h
+	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. test_estimator_aligned.cpp -o $@
 
 test_estimator: test_estimator.cpp sim_common.h $(FW)/speed_estimator.h stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. test_estimator.cpp stubs/stubs.cpp -o $@
@@ -46,9 +52,10 @@ test_glue: test_glue.cpp $(FWCPP) $(FW)/esp32_firmware.ino $(wildcard $(FW)/*.h)
 test: all
 	./test_glue
 	./test_estimator
+	./test_estimator_aligned
 	./test_encoders_equiv
 	./sim_old
 	./sim_new
 
 clean:
-	rm -f test_glue sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv *.o trace_new.csv
+	rm -f test_glue test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv *.o trace_new.csv

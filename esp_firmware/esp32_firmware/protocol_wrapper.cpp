@@ -57,3 +57,20 @@ void refFilterPublish(double tau_s) {
         Serial.write(buf, len);
     }
 }
+
+void adrcPublish(int mode, double wc, double wo, double b0_L, double b0_R, int ff) {
+    static char buf[90];
+    int len = snprintf(buf, sizeof(buf), "$7;%d;%.3f;%.3f;%.4f;%.4f;%d;#\r\n",
+                       mode, wc, wo, b0_L, b0_R, ff);
+    if (len > 0 && len < (int)sizeof(buf)) {
+        Serial.write(buf, len);
+    }
+}
+
+void speedWindowPublish(int min_edges, int align) {
+    static char buf[28];
+    int len = snprintf(buf, sizeof(buf), "$8;%d;%d;#\r\n", min_edges, align);
+    if (len > 0 && len < (int)sizeof(buf)) {
+        Serial.write(buf, len);
+    }
+}

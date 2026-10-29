@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
 # SPDX-License-Identifier: MIT
 """Графики для steptest.py и mtcal.py. Нужен matplotlib (pip install matplotlib); без него скрипты работают, просто без графиков."""
+import ui
 import os
 
 import numpy as np
@@ -16,7 +17,7 @@ def _plt(show):
         import matplotlib.pyplot as plt
         return plt
     except ImportError:
-        print("Графики не построены: установите matplotlib (pip install matplotlib).")
+        ui.warn("Графики не построены: установите matplotlib (pip install matplotlib).")
         return None
 
 
@@ -24,7 +25,7 @@ def _finish(plt, fig, path, show):
     fig.tight_layout()
     if path:
         fig.savefig(path, dpi=130)
-        print("График сохранён: %s" % path)
+        ui.ok("График сохранён: %s" % path)
     if show:
         plt.show()
     plt.close(fig)
@@ -120,4 +121,39 @@ def plot_cal(log, st, br, sp, path="cal_plot.png", show=False):
     ax.set_ylabel("скорость, об/с")
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="lower right")
+    _finish(plt, fig, path, show)
+
+
+def plot_compare(logs, names, levels, wheel_r, base, path="step_compare.png", show=False):
+    """Наложение ступенек нескольких логов (например, ПИ и LADRC): скорости L/R и набег курса"""
+    plt = _plt(show)
+    if plt is None:
+        return
+    two_pi = 2.0 * np.pi
+    styles = ["-", "--", ":", "-."]
+    fig, axs = plt.subplots(2, len(levels), figsize=(5.2 * len(levels), 7), squeeze=False,
+                            gridspec_kw={"height_ratios": [2, 1]})
+    for j, lev in enumerate(levels):
+        ax, ay = axs[0, j], axs[1, j]
+        ax.axhline(lev, color="0.6", lw=0.8, ls=":")
+        for k, (log, name) in enumerate(zip(logs, names)):
+            a = np.array([[r[2], r[3], r[4]] for r in log if r[0] == lev and r[1] == "step"])
+            if len(a) < 2:
+                continue
+            t = a[:, 0] - a[0, 0]
+            ls = styles[k % len(styles)]
+            ax.plot(t, a[:, 1], color=C_L, lw=1.3, ls=ls, label="%s L" % name)
+            ax.plot(t, a[:, 2], color=C_R, lw=1.3, ls=ls, label="%s R" % name)
+            dt = np.diff(a[:, 0], prepend=a[0, 0])
+            yaw = np.cumsum((a[:, 2] - a[:, 1]) * two_pi * wheel_r / base * dt) * 180 / np.pi
+            ay.plot(t, yaw, color="0.2", lw=1.3, ls=ls, label=name)
+        ax.set_title("уставка %.2f об/с" % lev, fontsize=10)
+        ax.set_ylabel("скорость, об/с")
+        ax.grid(alpha=0.3)
+        ay.axhline(0, color="0.6", lw=0.8)
+        ay.set_ylabel("набег курса, °")
+        ay.set_xlabel("время от ступеньки, с")
+        ay.grid(alpha=0.3)
+    axs[0, 0].legend(fontsize=8, loc="lower right")
+    axs[1, 0].legend(fontsize=8)
     _finish(plt, fig, path, show)

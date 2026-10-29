@@ -26,6 +26,8 @@ import time
 
 import numpy as np
 
+import ui
+
 TWO_PI = 2.0 * math.pi
 LINE_RE = re.compile(r"\$3;([^#]*)#")
 
@@ -39,7 +41,7 @@ class SerialLink:
         self.s = serial.Serial(port, baud, timeout=0)
         self.buf = b""
         # Открытие порта по DTR/RTS перезагружает ESP32: ждём конца загрузки прошивки
-        print("Порт открыт, жду загрузку платы %.1f с..." % boot_wait)
+        ui.say("Порт открыт, жду загрузку платы %.1f с..." % boot_wait, "dim")
         time.sleep(boot_wait)
         self.s.reset_input_buffer()
 
@@ -360,24 +362,46 @@ def recommend(log, wheel_r, lam_factor=0.5, lambda_s=None):
 
 def report(log, wheel_r, lam_factor, lambda_s=None):
     br, st, sp, ff, pi = recommend(log, wheel_r, lam_factor, lambda_s)
-    print("\n=== Результат ===")
+    rows, notes = [], []
     for n in ("L", "R"):
         kv, dz, r2, pts, top = st[n]
-        print("Колесо %s: страгивание при ШИМ %s | мёртвая зона dz=%.3f, Kv=%.2f об/с на 1.0 ШИМ (R^2=%.4f, %d точек) | Tm=%.0f мс, L=%.0f мс"
-              % (n, ("%.2f" % br[n]) if br[n] is not None else "?", dz, kv, r2, len(pts), sp[n][0] * 1000, sp[n][1] * 1000))
-        if br[n] is not None and br[n] - dz > 0.05:
-            print("   ! страгивание (%.2f) заметно выше dz (%.2f): на скоростях около 0.05 об/с возможен рывок при троганиии" % (br[n], dz))
+        brk = br[n]
+        rows.append([
+            n,
+            ("%.2f" % brk) if brk is not None else "?",
+            "%.3f" % dz,
+            "%.2f" % kv,
+            ("%.4f" % r2, "green" if r2 >= 0.99 else "bold red"),
+            "%d" % len(pts),
+            "%.0f" % (sp[n][0] * 1000),
+            "%.0f" % (sp[n][1] * 1000),
+            ("%.2f" % top, "green" if top >= 3.5 else "bold red"),
+        ])
+        if brk is not None and brk - dz > 0.05:
+            notes.append("Колесо %s: страгивание (%.2f) заметно выше dz (%.2f): на скоростях около 0.05 об/с возможен рывок при трогании" % (n, brk, dz))
         if r2 < 0.99:
-            print("   ! R^2 < 0.99: статика нелинейна (проверьте, что колёса свободно вращаются и опыт шёл с поднятыми колёсами)")
-        print("   Максимальная измеренная скорость ~ %.2f об/с" % top)
+            notes.append("Колесо %s: R^2 < 0.99: статика нелинейна (проверьте, что колёса свободно вращаются и опыт шёл с поднятыми колёсами)" % n)
         if top < 3.5:
-            print("   ! при ШИМ 1.0 колесо даёт %.2f об/с: 3.5 об/с недостижимы (проверьте питание)" % top)
+            notes.append("Колесо %s: при ШИМ 1.0 даёт %.2f об/с: 3.5 об/с недостижимы (проверьте питание)" % (n, top))
+    ui.table("Результат калибровки",
+             [("колесо", "center"), ("страгивание, ШИМ", "right"), ("dz", "right"), ("Kv, об/с на 1.0", "right"),
+              ("R^2", "right"), ("точек", "right"), ("Tm, мс", "right"), ("L, мс", "right"), ("макс., об/с", "right")],
+             rows)
+    pi_rows = [[n, "%.4f" % ff[n][0], "%.4f" % ff[n][1], "%.3f" % pi[n][0], "%.3f" % pi[n][1]] for n in ("L", "R")]
+    lam_txt = ("общая lambda = %.2f с" % lambda_s) if lambda_s else ("lambda = %.2f*Tm у каждого колеса" % lam_factor)
+    ui.table("Рекомендуемые коэффициенты (%s)" % lam_txt,
+             [("колесо", "center"), ("FF gain", "right"), ("FF dz", "right"), ("Kp", "right"), ("Ki", "right")], pi_rows)
+    for n in notes:
+        ui.warn(n)
     cmd_ff = "$11;%.4f;%.4f;%.4f;%.4f;1;#" % (ff["L"][0], ff["L"][1], ff["R"][0], ff["R"][1])
     cmd_pi = "$4;%.3f;%.3f;0;%.3f;%.3f;0;#" % (pi["L"][0], pi["L"][1], pi["R"][0], pi["R"][1])
-    print("\nКоманды для платы (по порядку: feedforward, затем ПИ с сохранением во flash):")
-    print("  " + cmd_ff)
-    print("  " + cmd_pi)
-    print("\nЕсли ПИ окажется колебательным - пересчитайте с --lam 1.0 (или 1.5): `python3 mtcal.py fit cal_log.csv --lam 1.0`.")
+    ui.panel(cmd_ff + "\n" + cmd_pi, "Команды для платы (по порядку: feedforward, затем ПИ; оба с сохранением во flash)", "green")
+    ui.say("Если ПИ окажется колебательным - пересчитайте с --lam 1.0 (или 1.5) либо с общей --lambda-s 0.3: python3 mtcal.py fit cal_log.csv --lam 1.0", "dim")
+    # LADRC по той же калибровке (b0 = K/Tm); подробнее и запись в плату - adrc.py
+    import adrc
+    p, notes = adrc.recommend(st, sp, wheel_r, lambda_s=lambda_s or 0.2)
+    ui.say("LADRC по этой калибровке (wc = 1/lambda, wo = 5*wc, полный FF): %s" % adrc.command(p, True), "dim")
+    ui.say("Подробно и с проверками: python3 adrc.py fit <лог> [--lambda-s 0.2]", "dim")
     return cmd_ff, cmd_pi
 
 
@@ -440,7 +464,7 @@ def main():
             sys.exit("Укажите --port (или --sim для проверки без робота)")
         link = SerialLink(a.port, a.baud)
         if not a.yes:
-            print("ВНИМАНИЕ: опыт прогонит моторы до 100%% ШИМ. Поднимите робота так, чтобы колёса вращались в воздухе.")
+            ui.warn("ВНИМАНИЕ: опыт прогонит моторы до 100% ШИМ. Поднимите робота так, чтобы колёса вращались в воздухе.")
             if input("Колёса подняты? Введите 'да': ").strip().lower() not in ("да", "yes", "y"):
                 sys.exit("Отменено.")
     exp = Experiment(link, a.radius)
@@ -450,7 +474,7 @@ def main():
         exp._stop()
         raise
     save_csv(exp.log, a.out)
-    print("Лог сохранён: %s (%d отсчётов)" % (a.out, len(exp.log)))
+    ui.ok("Лог сохранён: %s (%d отсчётов)" % (a.out, len(exp.log)))
     cmd_ff, cmd_pi = report(exp.log, a.radius, a.lam, a.lambda_s)
     make_plot(exp.log, a)
     if a.apply:
@@ -460,10 +484,8 @@ def main():
         link.sleep(0.1)
         link.send("$5;#\r\n$13;#\r\n")
         link.sleep(0.3)
-        print("Команды отправлены. Ответ платы:")
-        for ln in link.poll():
-            if ln.startswith("$2") or ln.startswith("$4"):
-                print("  " + ln)
+        ui.panel("\n".join(ln for ln in link.poll() if ln.startswith(("$2", "$4", "$6"))) or "(плата не ответила)",
+                 "Команды отправлены. Ответ платы", "green")
 
 
 if __name__ == "__main__":

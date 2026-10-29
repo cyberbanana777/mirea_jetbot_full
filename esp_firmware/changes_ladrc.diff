@@ -1,0 +1,2709 @@
+diff -ruN v23/esp32_firmware/command_parser.cpp v24/esp32_firmware/command_parser.cpp
+--- v23/esp32_firmware/command_parser.cpp	2026-10-28 20:52:30.509948186 +0300
++++ v24/esp32_firmware/command_parser.cpp	2026-10-29 22:17:03.948893729 +0300
+@@ -17,7 +17,7 @@
+   }
+   if (*p != ';') return cmd;  // нет разделителя
+   int rawType = atoi(typeStr);
+-  const bool known = (rawType >= 1 && rawType <= 5) || (rawType >= 10 && rawType <= 14);
++  const bool known = (rawType >= 1 && rawType <= 5) || (rawType >= 10 && rawType <= 18);
+   if (!known) return cmd;
+   cmd.type = static_cast<Command>(rawType);
+ 
+diff -ruN v23/esp32_firmware/command_parser.h v24/esp32_firmware/command_parser.h
+--- v23/esp32_firmware/command_parser.h	2026-10-28 20:52:30.510064038 +0300
++++ v24/esp32_firmware/command_parser.h	2026-10-29 22:17:03.949145463 +0300
+@@ -17,8 +17,14 @@
+   SET_DUTY = 10,         // $10;duty_L;duty_R;#   разомкнутый режим: скважность ШИМ [-1, 1]
+   SET_FF = 11,           // $11;gain_L;dz_L;gain_R;dz_R;save#  feedforward (save = 1 - записать во flash)
+   SET_TELEMETRY = 12,    // $12;on;#              телеметрия $3 на 100 Гц, одометрия $1 на паузе
+-  REQUEST_FF = 13,       // $13;#                 запросить параметры feedforward ($4) и фильтр уставки ($6)
+-  SET_REF_FILTER = 14    // $14;tau_s;save#       постоянная времени фильтра уставки, с (save = 1 - во flash)
++  REQUEST_FF = 13,       // $13;#                 запросить feedforward ($4), фильтр уставки ($6) и регулятор ($7)
++  SET_REF_FILTER = 14,   // $14;tau_s;save#       постоянная времени фильтра уставки, с (save = 1 - во flash)
++  // --- Выбор регулятора и LADRC ---
++  SET_CTRL_MODE = 15,    // $15;mode;save#        0 - ПИ, 1 - LADRC (безударно, можно на ходу)
++  SET_ADRC = 16,         // $16;wc;wo;b0_L;b0_R;ff;save#  параметры LADRC (ff: 0 нет, 1 мёртвая зона, 2 полный FF)
++  REQUEST_ADRC = 17,     // $17;#                 запросить регулятор и параметры LADRC ($7)
++  // --- Отладка ---
++  SET_SPEED_WINDOW = 18  // $18;n;align#          окно оценки скорости: минимум фронтов (1..8), align 1 - целые метки; до перезагрузки; $18;# - запрос. Ответ $8
+ };
+ 
+ struct ParsedCommand {
+diff -ruN v23/esp32_firmware/config.h v24/esp32_firmware/config.h
+--- v23/esp32_firmware/config.h	2026-10-28 20:52:30.510252663 +0300
++++ v24/esp32_firmware/config.h	2026-10-29 22:17:03.948681206 +0300
+@@ -51,6 +51,10 @@
+ // между фронтами (18 мс на 0.05 об/с), 4 (целая метка) - почти полностью, но окно 74 мс.
+ // Должно выполняться: SPEED_MIN_EDGES * (интервал фронтов на минимальной скорости) < SPEED_TIMEOUT_US.
+ const int32_t SPEED_MIN_EDGES = 2;
++// Окно оценки скорости из целого числа меток (4 фронта): убирает иглы от неравномерности
++// квадратуры (noisetest: сдвиг одного фронта ~0.5 интервала давал иглы 1.5-7 % скорости).
++// При true SPEED_MIN_EDGES округляется вверх до кратного 4. Меняется на ходу командой $18.
++const bool SPEED_ALIGN_QUAD = true;
+ // |скорость| выше этого, об/с, считается помехой и отбрасывается
+ const float SPEED_MAX_SANE_REV_S = 6.0;
+ // Фильтр скорости на такте контура: 1.0 - выключен; 0.5 даёт tau ~ 14 мс при 100 Гц.
+@@ -60,17 +64,48 @@
+ // === Контур скорости: feedforward + ПИ ===
+ // Управление: u = sign(v_зад) * (FF_DEADZONE + FF_GAIN * |v_зад|) + ПИ(ошибка), u в [-1, 1]
+ // FF_DEADZONE - скважность ШИМ, с которой колесо вращается (трение движения), FF_GAIN -
+-// прирост скважности на 1 м/с. Значения откалиброваны в воздухе (mtcal.py); на полу
+-// мёртвая зона больше (около 0.3), и недостающее добирает интеграл ПИ.
+-float FF_DEADZONE_L = 0.1073;
+-float FF_DEADZONE_R = 0.1114;
+-float FF_GAIN_L = 0.5848;
+-float FF_GAIN_R = 0.9133;
++// прирост скважности на 1 м/с. Значения откалиброваны на ПОЛУ (робот стоит на колёсах);
++// их же использует LADRC с ADRC_FF = 2. Калибровка в воздухе была: dz 0.1073 / 0.1114,
++// gain 0.5848 / 0.9133 - для работы с поднятыми колёсами вернуть командой $11.
++float FF_DEADZONE_L = 0.2992;
++float FF_DEADZONE_R = 0.3101;
++float FF_GAIN_L = 0.5151;
++float FF_GAIN_R = 0.8424;
+ 
+ // Фильтр уставки скорости (одинаковый для обоих колёс), постоянная времени, с.
+ // Оба колеса отрабатывают одну и ту же плавную траекторию: нет перерегулирования от ступеньки
+ // и переходные процессы колёс совпадают. 0 - выключен. Меняется командой $14 без перепрошивки.
+-float REF_TAU_S = 0.15;
++// По умолчанию выключен: LADRC и так даёт отклик ~1/(s/wc + 1), а для Nav2 сглаживание
++// делает velocity_smoother.
++float REF_TAU_S = 0.0;
++
++// === Выбор регулятора и LADRC ===
++// CTRL_MODE: 0 - feedforward + ПИ (как раньше), 1 - LADRC. Меняется командой $15 без перепрошивки,
++// переключение на ходу безударное (скважность в момент переключения не скачет).
++// По умолчанию LADRC (настроен на полу 29.10.2026: steptest s_l9.csv).
++int CTRL_MODE = 1;
++// LADRC первого порядка: модель колеса dv/dt = b0*u + f, где f - всё неизвестное (инерция, трение,
++// мёртвая зона, нагрузка). Наблюдатель ESO оценивает v и f, закон u = (wc*(r - z1) - z2) / b0.
++// ADRC_WC  - полоса контура, рад/с: отклик на уставку ~ 1/(s/wc + 1), то есть lambda = 1/wc
++//            (5 рад/с ~ lambda 0.2 с, как у ПИ с общей lambda).
++// ADRC_WO  - полоса наблюдателя, рад/с: обычно 3-5 * ADRC_WC. При такте 10 мс держать wo*dt <= 0.5
++//            (wo <= 50); больше - шум скважности и раскачка из-за запаздывания измерения.
++// ADRC_B0_L/R - ускорение колеса на единицу скважности, (м/с^2) на 1.0 = K / Tm. Здесь по калибровке
++//            в воздухе: L 1.709/0.174, R 1.0945/0.143. Ошибиться лучше в большую сторону
++//            (медленнее, но устойчиво); заниженное b0 с запаздыванием может раскачать контур.
++// ADRC_FF  - прямая подача по калибровке feedforward ($11), наблюдатель оценивает остаток:
++//            0 - нет (чистый LADRC: мёртвую зону и трение ESO находит сам после каждого старта),
++//            1 - только мёртвая зона sign(r)*FF_DEADZONE,
++//            2 - полный статический feedforward sign(r)*(FF_DEADZONE + FF_GAIN*|r|), как у ПИ.
++//            Без прямой подачи старт с места на полу заметно медленнее (ESO "ищет" 0.3 скважности).
++// Подобрано на полу (steptest, 29.10.2026): wc 9, wo 40 -> t90 ~280 мс на 1.2 об/с,
++// перерегулирование 5-8 %, набег курса за ступеньку < 0.1 град. (wc 5 / wo 25 медленнее,
++// wo 30 хуже синхронность колёс.)
++float ADRC_WC = 9.0;
++float ADRC_WO = 40.0;
++float ADRC_B0_L = 9.82;
++float ADRC_B0_R = 7.65;
++float ADRC_FF = 2.0;
+ 
+ // === Таймеры ===
+ // Контур скорости: 100 Гц. Оценка скорости использует реальные метки времени
+diff -ruN v23/esp32_firmware/encoders.cpp v24/esp32_firmware/encoders.cpp
+--- v23/esp32_firmware/encoders.cpp	2026-10-28 20:52:30.509929581 +0300
++++ v24/esp32_firmware/encoders.cpp	2026-10-29 22:17:03.948870254 +0300
+@@ -8,6 +8,10 @@
+ volatile int32_t Encoders::_rightTotal = 0;
+ volatile uint32_t Encoders::_leftLastUs = 0;
+ volatile uint32_t Encoders::_rightLastUs = 0;
++volatile uint32_t Encoders::_leftPhaseUs[4] = {0, 0, 0, 0};
++volatile uint32_t Encoders::_rightPhaseUs[4] = {0, 0, 0, 0};
++volatile int8_t Encoders::_leftDir = 1;
++volatile int8_t Encoders::_rightDir = 1;
+ // Для прерываний (машины состояний)
+ volatile bool Encoders::_ReadPIN_R_A_A;
+ volatile bool Encoders::_ReadPIN_R_B_A;
+@@ -82,17 +86,48 @@
+   portEXIT_CRITICAL(&_mux);
+ }
+ 
++void Encoders::snapshotLeftPhases(int32_t &total, uint32_t phaseUs[4], int8_t &lastDir) {
++  portENTER_CRITICAL(&_mux);
++  total = _leftTotal;
++  for (int i = 0; i < 4; ++i) phaseUs[i] = _leftPhaseUs[i];
++  lastDir = _leftDir;
++  portEXIT_CRITICAL(&_mux);
++}
++
++void Encoders::snapshotRightPhases(int32_t &total, uint32_t phaseUs[4], int8_t &lastDir) {
++  portENTER_CRITICAL(&_mux);
++  total = _rightTotal;
++  for (int i = 0; i < 4; ++i) phaseUs[i] = _rightPhaseUs[i];
++  lastDir = _rightDir;
++  portEXIT_CRITICAL(&_mux);
++}
++
+ // Учёт одного фронта. Вызывается из прерывания внутри критической секции.
++// Номер фронта (тип = id & 3): id = большая из позиций до и после фронта.
+ void IRAM_ATTR Encoders::_countR(int8_t d) {
++  const uint32_t now = micros();
++  const int32_t before = _rightTotal;
+   _rightPos += d;
+   _rightTotal += d;
+-  _rightLastUs = micros();
++  _rightLastUs = now;
++  if (d != 0) {
++    const uint32_t id = (uint32_t)(d > 0 ? _rightTotal : before);
++    _rightPhaseUs[id & 3u] = now;
++    _rightDir = d;
++  }
+ }
+ 
+ void IRAM_ATTR Encoders::_countL(int8_t d) {
++  const uint32_t now = micros();
++  const int32_t before = _leftTotal;
+   _leftPos += d;
+   _leftTotal += d;
+-  _leftLastUs = micros();
++  _leftLastUs = now;
++  if (d != 0) {
++    const uint32_t id = (uint32_t)(d > 0 ? _leftTotal : before);
++    _leftPhaseUs[id & 3u] = now;
++    _leftDir = d;
++  }
+ }
+ 
+ // обработчики прерываний (код из вашего файла, адаптированный):
+diff -ruN v23/esp32_firmware/encoders.h v24/esp32_firmware/encoders.h
+--- v23/esp32_firmware/encoders.h	2026-10-28 20:52:30.510108254 +0300
++++ v24/esp32_firmware/encoders.h	2026-10-29 22:17:03.949163163 +0300
+@@ -19,6 +19,12 @@
+   static void snapshotLeft(int32_t &total, uint32_t &lastEdgeUs);
+   static void snapshotRight(int32_t &total, uint32_t &lastEdgeUs);
+ 
++  // То же плюс время последнего фронта каждого из 4 типов (phaseUs[id & 3], id = большая из
++  // позиций до и после фронта) и направление последнего фронта: для окна из целых меток
++  // (MTSpeedEstimator::updateAligned).
++  static void snapshotLeftPhases(int32_t &total, uint32_t phaseUs[4], int8_t &lastDir);
++  static void snapshotRightPhases(int32_t &total, uint32_t phaseUs[4], int8_t &lastDir);
++
+ private:
+   static volatile int32_t _leftPos;
+   static volatile int32_t _rightPos;
+@@ -26,6 +32,10 @@
+   static volatile int32_t _rightTotal;
+   static volatile uint32_t _leftLastUs;
+   static volatile uint32_t _rightLastUs;
++  static volatile uint32_t _leftPhaseUs[4];
++  static volatile uint32_t _rightPhaseUs[4];
++  static volatile int8_t _leftDir;
++  static volatile int8_t _rightDir;
+   static volatile bool _ReadPIN_L_A_A;
+   static volatile bool _ReadPIN_L_A_B;
+   static volatile bool _ReadPIN_L_B_A;
+diff -ruN v23/esp32_firmware/esp32_firmware.ino v24/esp32_firmware/esp32_firmware.ino
+--- v23/esp32_firmware/esp32_firmware.ino	2026-10-28 20:52:30.510233910 +0300
++++ v24/esp32_firmware/esp32_firmware.ino	2026-10-29 22:17:03.949492352 +0300
+@@ -4,10 +4,10 @@
+ 
+ /**
+   @author Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
+-  @date 25.10.2026
+-  @version 2.3.0
++  @date 28.10.2026
++  @version 2.4.0
+ */
+-const char *VERSION = "2.3.0";
++const char *VERSION = "2.4.0";
+ 
+ #include <Arduino.h>
+ #include <math.h>
+@@ -65,7 +65,8 @@
+ 
+ // Оценка скорости колёс по фронтам (M/T-метод), по одному оценщику на колесо
+ const MTSpeedParams SPEED_PARAMS = {1.0f / ENC_EDGES_PER_REV, SPEED_TIMEOUT_US,
+-                                    SPEED_MIN_EDGES, SPEED_MAX_SANE_REV_S, SPEED_FILTER_K};
++                                    SPEED_MIN_EDGES, SPEED_MAX_SANE_REV_S, SPEED_FILTER_K,
++                                    SPEED_ALIGN_QUAD};
+ MTSpeedEstimator speedR(SPEED_PARAMS);
+ MTSpeedEstimator speedL(SPEED_PARAMS);
+ 
+@@ -293,21 +294,24 @@
+ 
+ /**
+  * @brief Один такт контура скорости (100 Гц): оценка скорости колёс по фронтам
+- * энкодеров и обновление регуляторов (feedforward + ПИ).
++ * энкодеров и обновление регуляторов (feedforward + ПИ или LADRC, см. $15).
+  */
+ void controlStep()
+ {
+   // Снимок (позиция, время последнего фронта) для каждого колеса, затем время "сейчас":
+   // возраст последнего фронта получается неотрицательным
++  // (позиция, время последнего фронта каждого из 4 типов, направление) для каждого колеса,
++  // затем время "сейчас": возраст фронтов получается неотрицательным
+   int32_t posR, posL;
+-  uint32_t lastR, lastL;
+-  encoders.snapshotRight(posR, lastR);
+-  encoders.snapshotLeft(posL, lastL);
++  uint32_t phR[4], phL[4];
++  int8_t dirR, dirL;
++  encoders.snapshotRightPhases(posR, phR, dirR);
++  encoders.snapshotLeftPhases(posL, phL, dirL);
+   const uint32_t now = micros();
+ 
+   // об/с -> м/с; знак колеса приводится так, чтобы вперёд было > 0 у обоих
+-  const float revR = ENC_SIGN_R * speedR.update(posR, lastR, now);
+-  const float revL = ENC_SIGN_L * speedL.update(posL, lastL, now);
++  const float revR = ENC_SIGN_R * speedR.updateAligned(posR, phR, dirR, now);
++  const float revL = ENC_SIGN_L * speedL.updateAligned(posL, phL, dirL, now);
+   const float rightLinVel = revR * 2 * Pi * WHEEL_RADIUS;
+   const float leftLinVel = revL * 2 * Pi * WHEEL_RADIUS;
+ 
+@@ -368,6 +372,13 @@
+   flashStorage.loadRefTau(REF_TAU_S);
+   controller.setRefFilter(REF_TAU_S);
+ 
++  // Регулятор (ПИ или LADRC) и параметры LADRC: значения из config.h, если не сохранялись ($15/$16)
++  flashStorage.loadAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF);
++  ADRC_FF = constrain(roundf(ADRC_FF), 0.0f, 2.0f);
++  controller.setAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (uint8_t)ADRC_FF);
++  flashStorage.loadCtrlMode(CTRL_MODE);
++  controller.setControlMode(CTRL_MODE == 1 ? ControlMode::kLadrc : ControlMode::kPi);
++
+   controller.setWheelSpeeds(0.0, 0.0);
+ 
+   emergency_timer = millis();
+@@ -519,6 +530,7 @@
+     case Command::REQUEST_FF:
+       feedforwardPublish(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
+       refFilterPublish(REF_TAU_S);
++      adrcPublish(CTRL_MODE, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (int)ADRC_FF);
+       break;
+ 
+     case Command::SET_REF_FILTER:
+@@ -531,6 +543,54 @@
+       }
+       break;
+ 
++    case Command::SET_CTRL_MODE:
++      // $15;mode;save#  0 - ПИ, 1 - LADRC. Переключение безударное, можно на ходу
++      if (cmd.count >= 1 && isfinite(cmd.args[0]))
++      {
++        CTRL_MODE = (cmd.args[0] >= 0.5f) ? 1 : 0;
++        controller.setControlMode(CTRL_MODE == 1 ? ControlMode::kLadrc : ControlMode::kPi);
++        if (cmd.count >= 2 && cmd.args[1] >= 0.5f)
++          flashStorage.saveCtrlMode(CTRL_MODE);
++      }
++      break;
++
++    case Command::SET_ADRC:
++      // $16;wc;wo;b0_L;b0_R;ff;save#  ff: 0 - без прямой подачи, 1 - мёртвая зона, 2 - полный FF (ff и save необязательны, по умолчанию 0)
++      if (cmd.count >= 4 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]) &&
++          isfinite(cmd.args[2]) && isfinite(cmd.args[3]))
++      {
++        ADRC_WC = constrain(cmd.args[0], 0.5f, 50.0f);
++        ADRC_WO = constrain(cmd.args[1], 1.0f, 100.0f);   // wo*dt <= 1 при 10 мс (рекомендуется <= 0.5)
++        ADRC_B0_L = constrain(cmd.args[2], 0.5f, 200.0f);
++        ADRC_B0_R = constrain(cmd.args[3], 0.5f, 200.0f);
++        ADRC_FF = (cmd.count >= 5 && isfinite(cmd.args[4])) ? constrain(roundf(cmd.args[4]), 0.0f, 2.0f) : 0.0f;
++        controller.setAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (uint8_t)ADRC_FF);
++        if (cmd.count >= 6 && cmd.args[5] >= 0.5f)
++          flashStorage.saveAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF);
++      }
++      break;
++
++    case Command::REQUEST_ADRC:
++      adrcPublish(CTRL_MODE, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (int)ADRC_FF);
++      break;
++
++    case Command::SET_SPEED_WINDOW:
++      // $18;n;align#  окно оценки скорости (отладка шума, tools/noisetest.py), не сохраняется;
++      // n - минимум фронтов (1..8), align - 1: окно из целых меток, 0: как раньше. $18;# - запрос
++      if (cmd.count >= 1 && isfinite(cmd.args[0]))
++      {
++        const int32_t n = constrain((int32_t)lroundf(cmd.args[0]), (int32_t)1, (int32_t)8);
++        speedL.setMinEdges(n);
++        speedR.setMinEdges(n);
++      }
++      if (cmd.count >= 2 && isfinite(cmd.args[1]))
++      {
++        speedL.setAlignQuad(cmd.args[1] >= 0.5f);
++        speedR.setAlignQuad(cmd.args[1] >= 0.5f);
++      }
++      speedWindowPublish(speedL.minEdges(), speedL.alignQuad() ? 1 : 0);
++      break;
++
+     case Command::UNKNOWN:
+       break;
+     }
+diff -ruN v23/esp32_firmware/flash_storage.cpp v24/esp32_firmware/flash_storage.cpp
+--- v23/esp32_firmware/flash_storage.cpp	2026-10-28 20:52:30.509959361 +0300
++++ v24/esp32_firmware/flash_storage.cpp	2026-10-29 22:17:03.948912212 +0300
+@@ -93,3 +93,35 @@
+     _prefs.putFloat("RefTau", tauS);
+     _prefs.end();
+ }
++
++void FlashStorageManager::loadCtrlMode(int &mode) {
++    _prefs.begin(_namespace, true);
++    mode = _prefs.getInt("CtrlMode", mode);
++    _prefs.end();
++}
++
++void FlashStorageManager::saveCtrlMode(int mode) {
++    _prefs.begin(_namespace, false);
++    _prefs.putInt("CtrlMode", mode);
++    _prefs.end();
++}
++
++void FlashStorageManager::loadAdrc(float &wc, float &wo, float &b0L, float &b0R, float &ffMode) {
++    _prefs.begin(_namespace, true);
++    wc = _prefs.getFloat("AdrcWc", wc);
++    wo = _prefs.getFloat("AdrcWo", wo);
++    b0L = _prefs.getFloat("AdrcB0L", b0L);
++    b0R = _prefs.getFloat("AdrcB0R", b0R);
++    ffMode = _prefs.getFloat("AdrcFf", ffMode);
++    _prefs.end();
++}
++
++void FlashStorageManager::saveAdrc(float wc, float wo, float b0L, float b0R, float ffMode) {
++    _prefs.begin(_namespace, false);
++    _prefs.putFloat("AdrcWc", wc);
++    _prefs.putFloat("AdrcWo", wo);
++    _prefs.putFloat("AdrcB0L", b0L);
++    _prefs.putFloat("AdrcB0R", b0R);
++    _prefs.putFloat("AdrcFf", ffMode);
++    _prefs.end();
++}
+diff -ruN v23/esp32_firmware/flash_storage.h v24/esp32_firmware/flash_storage.h
+--- v23/esp32_firmware/flash_storage.h	2026-10-28 20:52:30.510053731 +0300
++++ v24/esp32_firmware/flash_storage.h	2026-10-29 22:17:03.949127572 +0300
+@@ -53,6 +53,15 @@
+     void saveRefTau(float tauS);
+ 
+     /**
++     * Загружает/сохраняет выбранный регулятор (0 - ПИ, 1 - LADRC) и параметры LADRC.
++     * Если ключей нет, остаются переданные значения (заводские из config.h).
++     */
++    void loadCtrlMode(int &mode);
++    void saveCtrlMode(int mode);
++    void loadAdrc(float &wc, float &wo, float &b0L, float &b0R, float &ffMode);
++    void saveAdrc(float wc, float wo, float b0L, float b0R, float ffMode);
++
++    /**
+      * Проверяет, был ли уже выполнен первый запуск (наличие флага nvsInit).
+      */
+     bool isInitialized();
+diff -ruN v23/esp32_firmware/motor_controller.cpp v24/esp32_firmware/motor_controller.cpp
+--- v23/esp32_firmware/motor_controller.cpp	2026-10-28 20:52:30.510182701 +0300
++++ v24/esp32_firmware/motor_controller.cpp	2026-10-29 22:17:03.949436348 +0300
+@@ -24,6 +24,7 @@
+     _openLoop(false), _openDutyL(0.0f), _openDutyR(0.0f),
+     _prevSignL(0), _prevSignR(0),
+     _refTau(0.0f), _refL(0), _refR(0), _tgtPrevL(0), _tgtPrevR(0), _frozenL(0), _frozenR(0),
++    _mode(ControlMode::kPi), _wc(5.0f), _wo(25.0f), _b0L(10.0f), _b0R(10.0f), _adrcFf(0),
+     _leftChannel(leftChannel), _rightChannel(rightChannel),
+     _invertLeft(invertLeft), _invertRight(invertRight), _minDuty(0.02f)
+ 
+@@ -106,6 +107,8 @@
+   _prevSignL = 0;
+   _prevSignR = 0;
+   _frozenL = _frozenR = 0;
++  _esoL = Eso();
++  _esoR = Eso();
+   _openLoop = true;
+ }
+ 
+@@ -193,6 +196,114 @@
+   return _cutValue(-1.0f, 1.0f, ff + pi);
+ }
+ 
++// ---------------------------------------------------------------------------------------------
++// LADRC (линейный ADRC первого порядка, параметризация через полосы, Z. Gao 2003)
++//
++// Модель колеса: dv/dt = b0*u + f. Всё, что не b0*u (инерция -v/Tm, мёртвая зона и трение,
++// нагрузка, ошибка модели), собрано в "суммарное возмущение" f, которое считается медленно
++// меняющимся. Наблюдатель расширенного состояния (ESO), метод Эйлера, шаг h = dt:
++//   e  = v_изм - z1
++//   z1 += h * (z2 + b0*u + 2*wo*e)        // beta1 = 2*wo
++//   z2 += h * (wo^2 * e)                  // beta2 = wo^2: оба полюса ошибки оценки в -wo
++// Закон управления: u = (wc*(r - z1) - z2) / b0. Если оценка точна, dv/dt = wc*(r - v),
++// то есть замкнутый контур - апериодическое звено с постоянной времени 1/wc для любого колеса.
++// В наблюдатель подаётся РЕАЛЬНО поданная (ограниченная) скважность: при насыщении он не
++// "думает", что мотор получил больше, и оценка f не забрасывается (естественный антивиндап).
++// Необязательная прямая подача по калибровке feedforward (setAdrc, ffMode 1/2) не меняет
++// структуру: наблюдатель просто оценивает меньший остаток, и старт с места не ждёт, пока он
++// "найдёт" мёртвую зону. Интеграла ошибки здесь нет, поэтому FF не даёт перерегулирования ПИ.
++// ---------------------------------------------------------------------------------------------
++
++int8_t MotorController::_signOf(float r) {
++  return (r > SETPOINT_ZERO_EPS) ? 1 : ((r < -SETPOINT_ZERO_EPS) ? -1 : 0);
++}
++
++float MotorController::_adrcFeedforward(float ref, float gain, float deadzone) const {
++  const int8_t sign = _signOf(ref);
++  if (!sign || _adrcFf == 0) return 0.0f;
++  if (_adrcFf == 1) return (float)sign * deadzone;
++  return (float)sign * (deadzone + gain * fabsf(ref));
++}
++
++float MotorController::_wheelStepAdrc(float ref, float meas, float b0, float gain, float deadzone, int8_t &prevSign,
++                                      Eso &eso) {
++  const int8_t sign = _signOf(ref);
++
++  // Старт, реверс или остановка: оценки прошлого направления не нужны (как сброс интеграла у ПИ).
++  // z2 = 0: возмущение (в чистом режиме - и мёртвую зону) наблюдатель найдёт заново.
++  if (sign != prevSign) {
++    eso.z1 = meas;
++    eso.z2 = 0.0f;
++    eso.u = 0.0f;
++  }
++  prevSign = sign;
++  if (sign == 0) {
++    eso.z1 = meas;
++    eso.z2 = 0.0f;
++    eso.u = 0.0f;
++    return 0.0f;
++  }
++
++  const float h = _dt * 0.001f;
++  // Прямая подача по калибровке: объект видит u = ff + u_eso, т.е. dv/dt = b0*u_eso + (f + b0*ff),
++  // и наблюдатель оценивает только остаток, который калибровка не объяснила
++  const float ff = _adrcFeedforward(ref, gain, deadzone);
++
++  // Наблюдатель: прогноз по модели + поправка по расхождению с измерением
++  const float e = meas - eso.z1;
++  eso.z1 += h * (eso.z2 + b0 * eso.u + 2.0f * _wo * e);
++  eso.z2 += h * (_wo * _wo * e);
++
++  // Закон управления
++  const float u = _cutValue(-1.0f, 1.0f, ff + (_wc * (ref - eso.z1) - eso.z2) / b0);
++  eso.u = u - ff;
++  return u;
++}
++
++void MotorController::_seedAdrc(Eso &eso, float ref, float meas, float uPrev, float b0, float gain, float deadzone) {
++  const float ff = _adrcFeedforward(ref, gain, deadzone);
++  // z1 = v, а z2 подобран так, что ff + (wc*(r - z1) - z2)/b0 = uPrev
++  eso.z1 = meas;
++  eso.u = uPrev - ff;
++  eso.z2 = _wc * (ref - meas) - b0 * eso.u;
++}
++
++void MotorController::_seedPi(uPID &pid, float ref, float meas, float uPrev, float gain, float deadzone,
++                              int16_t &frozenTicks) {
++  const int8_t sign = _signOf(ref);
++  const float ff = sign ? (float)sign * (deadzone + gain * fabsf(ref)) : 0.0f;
++  // uPID: выход = Kp*e + Ki*integral (Kd = 0), подбираем integral так, чтобы ff + выход = uPrev
++  pid.integral = (pid.Ki > 1e-6f) ? (uPrev - ff - pid.Kp * (ref - meas)) / pid.Ki : 0.0f;
++  frozenTicks = INT_FREEZE_MAX_TICKS;   // заморозка разгона не нужна: переход не ступенька
++}
++
++void MotorController::setControlMode(ControlMode mode) {
++  if (mode == _mode) return;
++  if (!_openLoop) {
++    if (mode == ControlMode::kLadrc) {
++      _seedAdrc(_esoL, _refL, _measLeft, _outputLeft, _b0L, _ffGainL, _ffDzL);
++      _seedAdrc(_esoR, _refR, _measRight, _outputRight, _b0R, _ffGainR, _ffDzR);
++    } else {
++      _seedPi(_pidL, _refL, _measLeft, _outputLeft, _ffGainL, _ffDzL, _frozenL);
++      _seedPi(_pidR, _refR, _measRight, _outputRight, _ffGainR, _ffDzR, _frozenR);
++    }
++  }
++  _mode = mode;
++}
++
++void MotorController::setAdrc(float wc, float wo, float b0L, float b0R, uint8_t ffMode) {
++  _wc = (wc > 0.1f) ? wc : 0.1f;
++  _wo = (wo > 0.1f) ? wo : 0.1f;
++  _b0L = (b0L > 0.1f) ? b0L : 0.1f;
++  _b0R = (b0R > 0.1f) ? b0R : 0.1f;
++  _adrcFf = (ffMode > 2) ? 2 : ffMode;
++  // Новые параметры на ходу: переподобрать z2 так, чтобы скважность не скакнула
++  if (_mode == ControlMode::kLadrc && !_openLoop) {
++    if (_signOf(_refL)) _seedAdrc(_esoL, _refL, _measLeft, _outputLeft, _b0L, _ffGainL, _ffDzL);
++    if (_signOf(_refR)) _seedAdrc(_esoR, _refR, _measRight, _outputRight, _b0R, _ffGainR, _ffDzR);
++  }
++}
++
+ void MotorController::update(float currentLeftSpeed, float currentRightSpeed) {
+   _measLeft = currentLeftSpeed;
+   _measRight = currentRightSpeed;
+@@ -209,8 +320,13 @@
+     _pidL.setpoint = _refL;
+     _pidR.setpoint = _refR;
+ 
+-    _outputLeft = _wheelStep(_pidL, _measLeft, _ffGainL, _ffDzL, _prevSignL, _frozenL);
+-    _outputRight = _wheelStep(_pidR, _measRight, _ffGainR, _ffDzR, _prevSignR, _frozenR);
++    if (_mode == ControlMode::kLadrc) {
++      _outputLeft = _wheelStepAdrc(_refL, _measLeft, _b0L, _ffGainL, _ffDzL, _prevSignL, _esoL);
++      _outputRight = _wheelStepAdrc(_refR, _measRight, _b0R, _ffGainR, _ffDzR, _prevSignR, _esoR);
++    } else {
++      _outputLeft = _wheelStep(_pidL, _measLeft, _ffGainL, _ffDzL, _prevSignL, _frozenL);
++      _outputRight = _wheelStep(_pidR, _measRight, _ffGainR, _ffDzR, _prevSignR, _frozenR);
++    }
+   }
+ 
+   _motorWrite(_leftChannel, _outputLeft);
+diff -ruN v23/esp32_firmware/motor_controller.h v24/esp32_firmware/motor_controller.h
+--- v23/esp32_firmware/motor_controller.h	2026-10-28 20:52:30.510216731 +0300
++++ v24/esp32_firmware/motor_controller.h	2026-10-29 22:17:03.949519863 +0300
+@@ -6,6 +6,13 @@
+ #include <Adafruit_PWMServoDriver.h>
+ #include <uPID.h>
+ 
++// Какой регулятор считает скважность в замкнутом режиме
++// Имена с префиксом k: в Arduino.h есть макрос PI, который ломает имя ControlMode::PI.
++enum class ControlMode : uint8_t {
++    kPi = 0,     // feedforward + ПИ с заморозкой интеграла и рампой страгивания
++    kLadrc = 1   // линейный ADRC первого порядка (наблюдатель расширенного состояния)
++};
++
+ class MotorController {
+ public:
+     /**
+@@ -55,6 +62,34 @@
+     // gain - скважность на 1 м/с, deadzone - скважность, с которой колесо трогается
+     void setFeedforward(float gainL, float deadzoneL, float gainR, float deadzoneR);
+ 
++    // Выбор регулятора. Переключение на ходу безударное: состояние нового регулятора
++    // (интеграл ПИ или оценки наблюдателя LADRC) подбирается так, чтобы на следующем такте
++    // скважность совпала с последней поданной.
++    void setControlMode(ControlMode mode);
++    ControlMode getControlMode() const { return _mode; }
++
++    /**
++     * Параметры LADRC (общие wc и wo для обоих колёс - одинаковая желаемая динамика).
++     * @param wc     полоса контура, рад/с (lambda = 1/wc)
++     * @param wo     полоса наблюдателя ESO, рад/с (beta1 = 2*wo, beta2 = wo^2)
++     * @param b0L    ускорение левого колеса на единицу скважности, (м/с^2)/1.0 = K/Tm
++     * @param b0R    то же для правого
++     * @param ffMode прямая подача по калибровке feedforward ($11), ESO оценивает остаток:
++     *               0 - нет (чистый LADRC: всё, включая мёртвую зону, находит наблюдатель),
++     *               1 - только мёртвая зона sign(r)*dz,
++     *               2 - полный статический feedforward sign(r)*(dz + gain*|r|), как у ПИ
++     */
++    void setAdrc(float wc, float wo, float b0L, float b0R, uint8_t ffMode);
++    float getAdrcWc() const { return _wc; }
++    float getAdrcWo() const { return _wo; }
++    float getAdrcB0Left() const { return _b0L; }
++    float getAdrcB0Right() const { return _b0R; }
++    uint8_t getAdrcFfMode() const { return _adrcFf; }
++    // Оценка суммарного возмущения f (z2 наблюдателя), м/с^2. В установившемся режиме
++    // -z2/b0 - это скважность, которую наблюдатель "нашёл" сам (аналог feedforward + интеграла).
++    float getDisturbanceLeft() const  { return _esoL.z2; }
++    float getDisturbanceRight() const { return _esoR.z2; }
++
+     /**
+      * Один такт контура скорости (вызывать строго по таймеру dt)
+      * @param currentLeftSpeed   - измеренная скорость левого колеса (м/с)
+@@ -108,6 +143,17 @@
+     float _tgtPrevL, _tgtPrevR;    // заданная скорость на прошлом такте (обнаружение ступеньки)
+     int16_t _frozenL, _frozenR;    // сколько тактов подряд интеграл заморожен при разгоне
+ 
++    // LADRC
++    struct Eso {
++        float z1 = 0.0f;  // оценка скорости, м/с
++        float z2 = 0.0f;  // оценка суммарного возмущения f, м/с^2
++        float u = 0.0f;   // поданная скважность (после ограничения) за вычетом прямой подачи
++    };
++    ControlMode _mode;
++    float _wc, _wo, _b0L, _b0R;
++    uint8_t _adrcFf;   // 0 - без прямой подачи, 1 - мёртвая зона, 2 - полный feedforward
++    Eso _esoL, _esoR;
++
+     uint8_t _leftChannel, _rightChannel;
+     bool _invertLeft, _invertRight;
+     // Скважность ниже этой не подаётся на мотор (не пищать и не греть впустую)
+@@ -120,6 +166,18 @@
+     float _wheelStep(uPID &pid, float meas, float gain, float deadzone, int8_t &prevSign,
+                      int16_t &frozenTicks);
+ 
++    // Один такт LADRC для одного колеса, возвращает скважность [-1, 1]
++    float _wheelStepAdrc(float ref, float meas, float b0, float gain, float deadzone, int8_t &prevSign, Eso &eso);
++    // Прямая подача LADRC по калибровке feedforward (режим _adrcFf)
++    float _adrcFeedforward(float ref, float gain, float deadzone) const;
++
++    // Безударный переход: подготовить состояние нового регулятора по последней скважности
++    void _seedAdrc(Eso &eso, float ref, float meas, float uPrev, float b0, float gain, float deadzone);
++    void _seedPi(uPID &pid, float ref, float meas, float uPrev, float gain, float deadzone, int16_t &frozenTicks);
++
++    // Знак уставки с зоной нечувствительности около нуля: -1, 0, +1
++    static int8_t _signOf(float r);
++
+     // Фильтр уставки одного колеса: target -> ref; сообщает о ступеньке заданной скорости
+     void _filterRef(float target, float &ref, float &prevTarget, int16_t &frozenTicks, float alpha);
+ 
+diff -ruN v23/esp32_firmware/protocol_wrapper.cpp v24/esp32_firmware/protocol_wrapper.cpp
+--- v23/esp32_firmware/protocol_wrapper.cpp	2026-10-28 20:52:30.510203961 +0300
++++ v24/esp32_firmware/protocol_wrapper.cpp	2026-10-29 22:17:03.949467357 +0300
+@@ -57,3 +57,20 @@
+         Serial.write(buf, len);
+     }
+ }
++
++void adrcPublish(int mode, double wc, double wo, double b0_L, double b0_R, int ff) {
++    static char buf[90];
++    int len = snprintf(buf, sizeof(buf), "$7;%d;%.3f;%.3f;%.4f;%.4f;%d;#\r\n",
++                       mode, wc, wo, b0_L, b0_R, ff);
++    if (len > 0 && len < (int)sizeof(buf)) {
++        Serial.write(buf, len);
++    }
++}
++
++void speedWindowPublish(int min_edges, int align) {
++    static char buf[28];
++    int len = snprintf(buf, sizeof(buf), "$8;%d;%d;#\r\n", min_edges, align);
++    if (len > 0 && len < (int)sizeof(buf)) {
++        Serial.write(buf, len);
++    }
++}
+diff -ruN v23/esp32_firmware/protocol_wrapper.h v24/esp32_firmware/protocol_wrapper.h
+--- v23/esp32_firmware/protocol_wrapper.h	2026-10-28 20:52:30.509972007 +0300
++++ v24/esp32_firmware/protocol_wrapper.h	2026-10-29 22:17:03.948932712 +0300
+@@ -32,4 +32,11 @@
+ // mmsg type = 6: постоянная времени фильтра уставки, с (ответ на $13)
+ void refFilterPublish (double tau_s);
+ 
++// mmsg type = 7: выбранный регулятор и параметры LADRC (ответ на $13 и $17)
++// $7;mode;wc;wo;b0_L;b0_R;ff;#   mode: 0 - ПИ, 1 - LADRC; ff: 0 - без прямой подачи, 1 - мёртвая зона, 2 - полный FF
++void adrcPublish (int mode, double wc, double wo, double b0_L, double b0_R, int ff);
++
++// mmsg type = 8: окно оценки скорости (ответ на $18): $8;min_edges;align;#. Отладка шума скорости (tools/noisetest.py)
++void speedWindowPublish (int min_edges, int align);
++
+ #endif
+\ No newline at end of file
+diff -ruN v23/esp32_firmware/speed_estimator.h v24/esp32_firmware/speed_estimator.h
+--- v23/esp32_firmware/speed_estimator.h	2026-10-28 20:52:30.510158067 +0300
++++ v24/esp32_firmware/speed_estimator.h	2026-10-29 22:17:03.949408271 +0300
+@@ -26,6 +26,18 @@
+ //
+ // minEdges > 1 растягивает окно на несколько тактов, пока не наберётся достаточно
+ // фронтов: сглаживает неидеальность квадратуры ценой задержки на низких скоростях.
++//
++// Выравнивание по меткам (alignQuad, updateAligned). У реального энкодера 4 фронта одной метки
++// (подъём/спад каналов A и B) стоят неравномерно: опыт noisetest показал сдвиг одного из них
++// на ~0.5 интервала. Окно, которое начинается на фронте одного типа и кончается на другом,
++// "видит" этот сдвиг: ошибка ~0.5 фронта на окно, то есть иглы 1.5-7 % скорости. Поэтому окно
++// всегда берётся из целого числа меток: от фронта одного типа до последнего фронта того же
++// типа (тип = номер фронта по модулю 4). Для этого прерывание хранит время последнего фронта
++// каждого из 4 типов. Цена - окно кончается до 3 фронтов раньше (1 мс на 2.6 об/с).
++//
++// Номер фронта (id): переход позиции k -> k+1 и k+1 -> k - это один и тот же физический фронт,
++// его id = k+1 (большая из двух позиций). Время, когда позиция стала P: при движении вперёд -
++// время фронта id = P, назад - id = P + 1.
+ 
+ #ifndef SPEED_ESTIMATOR_H
+ #define SPEED_ESTIMATOR_H
+@@ -39,6 +51,7 @@
+   int32_t minEdges;   // минимум фронтов в окне (>= 1); см. config.h
+   float maxSane;      // |ω| выше этого (об/с) считается помехой и отбрасывается
+   float filterK;      // 1 = без фильтра; 0 < k < 1: ω_f += k (ω - ω_f) на такте контура
++  bool alignQuad = false;  // окно из целого числа меток (только updateAligned)
+ };
+ 
+ class MTSpeedEstimator {
+@@ -116,11 +129,112 @@
+     return _filt;
+   }
+ 
++  /**
++   * Оценка с окном из целого числа меток (см. "Выравнивание по меткам" выше).
++   * @param pos     - накопленная позиция, фронтов
++   * @param phaseUs - время последнего фронта каждого типа: phaseUs[id & 3], мкс
++   * @param lastDir - направление последнего фронта (+1/-1)
++   * @param now     - текущее время, мкс (после снимка)
++   * При alignQuad = false сводится к обычному update() по времени последнего фронта.
++   */
++  float updateAligned(int32_t pos, const uint32_t phaseUs[4], int8_t lastDir, uint32_t now) {
++    const int8_t dir = (lastDir < 0) ? -1 : 1;
++    if (!_p.alignQuad) return update(pos, _reachT(phaseUs, pos, dir), now);
++
++    const uint32_t tLast = _reachT(phaseUs, pos, dir);
++    if (!_valid) {
++      _anchorPos = pos;
++      _anchorT = tLast;
++      _restartPos = pos;
++      _valid = true;
++      _stopped = false;
++      _raw = 0.0f;
++      _filt = 0.0f;
++      return 0.0f;
++    }
++
++    int32_t age = (int32_t)(now - tLast);
++    if (age < 0) age = 0;
++    const int32_t n = (int32_t)((uint32_t)pos - (uint32_t)_anchorPos);
++    // Окно - целое число меток (n округляется к нулю до кратного 4), не меньше minEdges
++    const int32_t nA = n - n % 4;
++    const int32_t absA = nA < 0 ? -nA : nA;
++    const int32_t need = ((_p.minEdges + 3) / 4) * 4;
++
++    if ((uint32_t)age > _p.timeoutUs) {
++      _raw = 0.0f;
++      _stopped = true;
++    } else if (_stopped) {
++      if (n != 0) {
++        _anchorPos = pos;
++        _anchorT = tLast;
++        _restartPos = pos;
++        _stopped = false;
++      }
++    } else if (absA >= need && absA >= 4) {
++      const int8_t wdir = nA > 0 ? 1 : -1;
++      if (wdir == dir) {   // при дребезге около нуля (направление сменилось внутри метки) окно пропускаем
++        const int32_t endPos = (int32_t)((uint32_t)_anchorPos + (uint32_t)nA);
++        const uint32_t tEnd = _reachT(phaseUs, endPos, wdir);
++        const uint32_t dt = tEnd - _anchorT;
++        if (dt > 0 && dt < 0x80000000u) {
++          const float w = (float)nA * _p.revPerEdge / ((float)dt * 1e-6f);
++          if (fabsf(w) <= _p.maxSane) _raw = w;
++        }
++        _anchorPos = endPos;
++        _anchorT = tEnd;
++      }
++    }
++
++    float out = _raw;
++    if (!_stopped && age > 0) {
++      // Следующий фронт ещё не пришёл. Если с перезапуска прошла целая метка, ограничение тоже
++      // по целой метке: от фронта того же типа, что следующий, 4 фронта назад, до "сейчас" -
++      // без влияния неравномерности квадратуры. Иначе - по одному фронту с запасом, как в update().
++      const int32_t sinceRestart = (int32_t)((uint32_t)pos - (uint32_t)_restartPos);
++      float bound;
++      if (sinceRestart >= 4 || sinceRestart <= -4) {
++        const uint32_t tMark = _reachT(phaseUs, (int32_t)((uint32_t)pos - (uint32_t)(3 * dir)), dir);
++        int32_t ageMark = (int32_t)(now - tMark);
++        if (ageMark < 1) ageMark = 1;
++        bound = MARK_MARGIN * 4.0f * _p.revPerEdge * 1e6f / (float)ageMark;
++      } else {
++        bound = BOUND_MARGIN * _p.revPerEdge * 1e6f / (float)age;
++      }
++      if (out > bound) out = bound;
++      else if (out < -bound) out = -bound;
++    }
++
++    _filt += _p.filterK * (out - _filt);
++    return _filt;
++  }
++
+   float speed() const { return _filt; }
+ 
++  // Отладка (команда $18): выравнивание окна по меткам на ходу
++  void setAlignQuad(bool on) {
++    _p.alignQuad = on;
++    _valid = false;
++  }
++  bool alignQuad() const { return _p.alignQuad; }
++
++  // Отладка (команда $18): сменить окно оценки на ходу. Следующий вызов update() начнёт окно заново.
++  void setMinEdges(int32_t n) {
++    _p.minEdges = (n < 1) ? 1 : n;
++    _valid = false;
++  }
++  int32_t minEdges() const { return _p.minEdges; }
++
+ private:
+   static constexpr float BOUND_MARGIN = 1.5f;
++  static constexpr float MARK_MARGIN = 1.1f;   // для ограничения по целой метке: только дрожание меток времени
++  // Время, когда позиция стала p (при движении в направлении dir)
++  static uint32_t _reachT(const uint32_t phaseUs[4], int32_t p, int8_t dir) {
++    const uint32_t id = (uint32_t)p + (dir < 0 ? 1u : 0u);
++    return phaseUs[id & 3u];
++  }
+   MTSpeedParams _p;
++  int32_t _restartPos = 0;   // позиция последнего перезапуска (старт, выход из остановки)
+   bool _valid = false;
+   bool _stopped = false;  // нет фронтов дольше timeoutUs; якорь устарел
+   int32_t _anchorPos = 0;
+diff -ruN v23/tools/README_speed.md v24/tools/README_speed.md
+--- v23/tools/README_speed.md	2026-10-28 20:52:30.510731413 +0300
++++ v24/tools/README_speed.md	2026-10-29 22:17:03.950528111 +0300
+@@ -1,4 +1,4 @@
+-# Быстрый контур скорости (M/T + feedforward + ПИ)
++# Быстрый контур скорости (M/T + feedforward + ПИ / LADRC)
+ 
+ ## Что изменилось
+ - **Оценка скорости**: `speed_estimator.h`. Прерывание энкодера запоминает счётчик фронтов и время последнего фронта; скорость = фронты / интервал между фронтами (метод M/T). Скользящее среднее на 5 значений убрано.
+@@ -14,9 +14,15 @@
+ | ПК → ESP | 10 | `$10;dL;dR;#` | открытый контур, скважность −1…1 |
+ | ПК → ESP | 11 | `$11;gainL;dzL;gainR;dzR;save#` | параметры feedforward, save=1 пишет во флэш |
+ | ПК → ESP | 12 | `$12;on;#` | телеметрия 100 Гц |
+-| ПК → ESP | 13 | `$13;#` | запрос feedforward |
++| ПК → ESP | 13 | `$13;#` | запрос feedforward ($4), фильтра уставки ($6) и регулятора ($7) |
++| ПК → ESP | 14 | `$14;tau;save#` | фильтр уставки, с |
++| ПК → ESP | 15 | `$15;mode;save#` | регулятор: 0 - ПИ, 1 - LADRC (безударно, можно на ходу) |
++| ПК → ESP | 16 | `$16;wc;wo;b0L;b0R;ff;save#` | параметры LADRC (ff: 0 нет прямой подачи, 1 мёртвая зона, 2 полный FF) |
++| ПК → ESP | 17 | `$17;#` | запрос регулятора и LADRC ($7) |
+ | ESP → ПК | 3 | `$3;t_us;refL;vL;uL;refR;vR;uR;#` | телеметрия |
+ | ESP → ПК | 4 | `$4;gainL;dzL;gainR;dzR;#` | текущий feedforward |
++| ESP → ПК | 6 | `$6;tau;#` | фильтр уставки |
++| ESP → ПК | 7 | `$7;mode;wc;wo;b0L;b0R;ff;#` | регулятор и параметры LADRC |
+ 
+ Без команд дольше 1 с: аварийная остановка, телеметрия выключается.
+ 
+@@ -71,3 +77,84 @@
+ ## Красивый вывод (rich)
+ 
+ `pip install rich` - таблицы, цветные пороги (зелёный/красный), рамки с командами для платы. Модуль `ui.py` лежит рядом со скриптами. Без rich скрипты работают как раньше, таблицы печатаются обычным выровненным текстом.
++
++## LADRC (прошивка 2.4.0)
++
++Второй регулятор скорости, выбирается командой `$15` (по умолчанию ПИ, поведение прошлой версии не изменилось).
++Модель колеса: $\dot v = b_0 u + f$, где $f$ - всё неизвестное (инерция, трение, нагрузка, ошибка калибровки).
++Наблюдатель расширенного состояния (ESO, Эйлер, шаг 10 мс) оценивает $z_1 \approx v$, $z_2 \approx f$:
++
++$$e = v - z_1,\quad z_1 \mathrel{+}= h\,(z_2 + b_0 u_{eso} + 2\omega_o e),\quad z_2 \mathrel{+}= h\,\omega_o^2 e,$$
++$$u = u_{ff} + \frac{\omega_c (r - z_1) - z_2}{b_0},\qquad u_{eso} = \operatorname{sat}(u) - u_{ff}.$$
++
++* `wc`, `wo` общие для обоих колёс (одинаковая желаемая динамика $1/(s/\omega_c+1)$), `b0` у каждого колеса свой.
++* `ff` - прямая подача по калибровке `$11`: 0 - чистый LADRC, 1 - мёртвая зона, 2 - полный статический FF.
++  Без неё на полу старт с места медленный: наблюдатель после каждого старта заново «ищет» ~0.3 скважности.
++* В наблюдатель идёт реально поданная (ограниченная) скважность - заброса при насыщении нет.
++* Старт, реверс, остановка: оценки сбрасываются (как интеграл ПИ). Фильтр уставки `$14` работает и для LADRC.
++* Переключение ПИ ↔ LADRC и смена параметров на ходу безударные: состояние нового регулятора подбирается так,
++  чтобы скважность на следующем такте совпала с последней.
++* Заводские значения (`config.h`, настроено на полу 29.10.2026): регулятор LADRC (`CTRL_MODE = 1`), wc 9, wo 40, b0 9.82 / 7.65, ff 2; FF по полу 0.5151 / 0.2992 / 0.8424 / 0.3101; фильтр уставки 0. Во flash - ключи `CtrlMode`, `AdrcWc`, `AdrcWo`, `AdrcB0L`, `AdrcB0R`, `AdrcFf`: сохранённые значения главнее заводских.
++
++Ограничения настройки: $\omega_o \Delta t \le 0.5$ ($\omega_o \le 50$ при 100 Гц), $\omega_o L \lesssim 1.5$,
++$\omega_o \approx 3\text{-}5\,\omega_c$, $1/\omega_c \ge 2L$. $b_0$ лучше завысить, чем занизить.
++
++### Скрипты
++```
++python3 tools/adrc.py fit cal_log.csv --lambda-s 0.2      # b0 = K/Tm по калибровке, wc = 1/lambda, wo = 5 wc, команда $16
++python3 tools/adrc.py show --port /dev/ttyUSB0            # что в плате
++python3 tools/adrc.py mode ladrc --port /dev/ttyUSB0       # выбрать LADRC (с сохранением; --no-save - до перезагрузки)
++python3 tools/adrc.py set --port /dev/ttyUSB0 --wc 9 --wo 40   # поменять часть параметров (с сохранением)
++
++# сравнение на одинаковых ступеньках, настройки только на время опыта:
++python3 tools/steptest.py run --port /dev/ttyUSB0 --levels 0.2,0.5,1.2 --mode pi
++python3 tools/steptest.py run --port /dev/ttyUSB0 --levels 0.2,0.5,1.2 --mode ladrc --adrc 5,25,9.82,7.65,2
++python3 tools/steptest.py compare step_log_pi.csv step_log_ladrc.csv --names ПИ,LADRC
++```
++Открытие порта перезагружает плату, поэтому несохранённые настройки живут только внутри одного запуска скрипта.
++`steptest` теперь печатает и синхронность колёс: max|wL − wR| и набег курса (`--base`, по умолчанию 0.1775 м).
++
++### Симуляция на коде прошивки (`host_test/sim_ladrc`, модели - допущения)
++Пол (Tm 0.25/0.20 с, мёртвая зона 0.30/0.31, страгивание 0.42/0.49), FF по полу, b0 по воздуху:
++
++| Уставка | ПИ λ 0.2: t90 L/R, перерег., курс | LADRC 5/25 полный FF | LADRC 9/40 полный FF |
++|---|---|---|---|
++| 0.2 об/с | 247/300 мс, 157-162 %, 1.58° | 418/460 мс, 44-54 %, 0.78° | 156/169 мс, 14-21 %, 0.22° |
++| 0.5 об/с | 190/177 мс, 25-27 %, 0.41° | 447/422 мс, 0 %, 0.16° | 271/278 мс, 0 %, 0.14° |
++| 1.2 об/с | 247/223 мс, 5-6 %, 1.03° | 543/559 мс, 0 %, 0.63° | 271/278 мс, 0 %, 0.37° |
++
++Чистый LADRC (ff 0) на полу медленный (t90 0.9-1.8 с). Переключение режима на ходу: скачок скважности 0.
++Это модель: на железе проверить запаздывание L (при L ≈ 50 мс wo 40 уже на грани) и рябь скважности.
++
++## Консоль для ручных команд (`console.py`)
++Замена монитора порта Arduino IDE: одометрия `$1` и телеметрия `$3` скрыты, ответы видны сразу и расшифрованы по полям.
++```
++python3 tools/console.py --port /dev/ttyUSB0      # Windows: --port COM5
++> $13;#          # ответы $4/$6/$7 с подписями полей
++> $15;1;0        # '#' можно не писать
++> hold $2;0.1;0.1;#   # повторять раз в 0.3 с (иначе аварийная остановка через 1 с); stop - стоп
++> odom / tel / last / help / q
++```
++`--log файл` - писать показанный вывод в файл. Arduino IDE (монитор порта) при этом должна быть закрыта: порт может держать только одна программа.
++
++## Шум скорости: неравномерная квадратура и окно из целых меток
++Опыт на роботе (`noisetest.py`, колёса в воздухе) показал иглы скорости 1,5-7 %, которые в фронтах энкодера
++постоянны (0,4-0,55 фронта на такт на скоростях 0,7-2,6 об/с), а в микросекундах нет. Значит, это не дрожание
++меток времени, а ошибка положения фронтов: один из 4 фронтов метки сдвинут примерно на полинтервала.
++
++Исправление (`SPEED_ALIGN_QUAD = true` в `config.h`): прерывание энкодера хранит время последнего фронта
++каждого из 4 типов (`snapshot*Phases`), а оценка скорости (`MTSpeedEstimator::updateAligned`) берёт окно из
++целого числа меток - от фронта одного типа до последнего фронта того же типа. Ограничение «скорость не выше,
++чем один фронт за прошедшее время» тоже считается по целой метке. Цена: окно кончается до 3 фронтов раньше,
++на разгоне 4 об/с² отставание оценки 6,7 мс вместо 5,3 мс. Одометрия не менялась.
++
++Тест `host_test/test_estimator_aligned` (квадратура с перекосом 0,5 интервала): прежняя оценка 0,5-12,7 % СКО,
++с целыми метками меньше 0,01 %.
++
++Проверка на роботе:
++```
++python3 tools/noisetest.py run --port /dev/ttyUSB0          # колёса в воздухе, режимы 2:0 (прежняя) и 2:1 (целые метки)
++python3 tools/noisetest.py fit noise_log.csv
++```
++Команда `$18;n;align#` (до перезагрузки, ответ `$8;n;align;#`): n - минимум фронтов в окне, align 1 - целые метки.
++Главная метрика - «иглы»: 95-й процентиль отклонения от скользящей медианы, в %, фронтах и мкс.
+diff -ruN v23/tools/adrc.py v24/tools/adrc.py
+--- v23/tools/adrc.py	1970-01-01 03:00:00.000000000 +0300
++++ v24/tools/adrc.py	2026-10-29 22:17:03.949663452 +0300
+@@ -0,0 +1,289 @@
++#!/usr/bin/env python3
++# Copyright (c) 2026 Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
++# SPDX-License-Identifier: MIT
++"""
++LADRC в прошивке: расчёт параметров по калибровке, запись в плату и выбор регулятора (ПИ / LADRC).
++
++    python3 adrc.py fit cal_log.csv                       # b0 по калибровке mtcal, wc/wo, команда $16
++    python3 adrc.py fit cal_log.csv --lambda-s 0.2 --apply --port /dev/ttyUSB0
++    python3 adrc.py show --port /dev/ttyUSB0              # что сейчас в плате: регулятор, LADRC, FF, ПИ
++    python3 adrc.py mode ladrc --port /dev/ttyUSB0        # переключить на LADRC (и сохранить во flash)
++    python3 adrc.py mode pi --port /dev/ttyUSB0
++    python3 adrc.py set --port /dev/ttyUSB0 --wc 9 --wo 40              # поменять часть параметров
++    python3 adrc.py set --port /dev/ttyUSB0 --b0 9.82,7.65 --ff 2
++
++Параметры LADRC (одинаковые wc и wo для обоих колёс - одинаковая желаемая динамика):
++  wc  полоса контура, рад/с. Отклик на уставку ~ 1/(s/wc + 1): lambda = 1/wc (5 рад/с ~ lambda 0.2 с).
++  wo  полоса наблюдателя ESO, рад/с. Обычно 3-5 * wc. Ограничения: wo*dt <= 0.5 (такт 10 мс -> wo <= 50)
++      и wo*L <= ~1.5 (L - запаздывание контура из калибровки), иначе шум и раскачка.
++  b0  ускорение колеса на единицу скважности, (м/с^2)/1.0 = K/Tm, где K = Kv*2*pi*R (м/с на 1.0).
++      Ошибиться лучше в большую сторону: завышенный b0 - медленнее, заниженный - риск раскачки.
++  ff  прямая подача по калибровке feedforward ($11): 0 - нет (чистый LADRC), 1 - мёртвая зона,
++      2 - полный статический FF. Наблюдатель оценивает только то, что калибровка не объяснила.
++
++Важно: открытие порта перезагружает плату (DTR). Значения без сохранения во flash после этого
++пропадают, поэтому `mode` и `set` по умолчанию сохраняют (--no-save - только до перезагрузки).
++Для разовых опытов без записи во flash есть `steptest.py run --mode ... --adrc ...`.
++"""
++import argparse
++import math
++import re
++import sys
++
++import ui
++
++TWO_PI = 2.0 * math.pi
++DT = 0.01                 # такт контура скорости, с (CONTROL_PERIOD_US)
++WO_DT_MAX = 0.5           # wo*dt: выше - дискретный наблюдатель "звенит"
++WO_L_MAX = 1.5            # wo*L: выше - запаздывание измерения раскачивает контур
++FF_NAMES = {0: "нет (чистый LADRC)", 1: "мёртвая зона", 2: "полный FF"}
++MODE_NAMES = {0: "ПИ", 1: "LADRC"}
++
++
++# ----------------------------------------------------------------------------------------------
++# Расчёт
++# ----------------------------------------------------------------------------------------------
++def b0_from_model(kv_rev, tm, wheel_r):
++    """Kv (об/с на единицу скважности), Tm (с) -> b0, (м/с^2) на единицу скважности"""
++    return kv_rev * TWO_PI * wheel_r / tm
++
++
++def recommend(st, sp, wheel_r, wc=None, lambda_s=None, wo=None, wo_mult=5.0, ff=2):
++    """st, sp - результаты mtcal.fit_static / fit_step. -> (параметры, замечания)"""
++    notes = []
++    b0 = {n: b0_from_model(st[n][0], sp[n][0], wheel_r) for n in ("L", "R")}
++    lag = max(sp["L"][1], sp["R"][1])
++    if wc is None:
++        wc = 1.0 / lambda_s if lambda_s else 5.0
++    if 1.0 / wc < 2.0 * lag:
++        wc_new = 1.0 / (2.0 * lag)
++        notes.append("wc = %.1f рад/с быстрее, чем позволяет запаздывание L = %.0f мс (lambda >= 2L): снижено до %.1f"
++                     % (wc, lag * 1000, wc_new))
++        wc = wc_new
++    if wo is None:
++        wo = wo_mult * wc
++    wo_cap = min(WO_DT_MAX / DT, WO_L_MAX / lag)
++    if wo > wo_cap:
++        notes.append("wo = %.0f рад/с больше предела %.0f (wo*dt <= %.1f, wo*L <= %.1f): снижено"
++                     % (wo, wo_cap, WO_DT_MAX, WO_L_MAX))
++        wo = wo_cap
++    if wo < 3.0 * wc:
++        notes.append("wo = %.0f меньше 3*wc = %.0f: наблюдатель медленный, возмущения подавляются хуже" % (wo, 3 * wc))
++    p = dict(wc=wc, wo=wo, b0L=b0["L"], b0R=b0["R"], ff=int(ff))
++    return p, notes
++
++
++def check(p, lag=None):
++    """Замечания к набору параметров (для `set` и steptest)"""
++    notes = []
++    if p["wo"] * DT > WO_DT_MAX:
++        notes.append("wo*dt = %.2f > %.1f: дискретный наблюдатель на 100 Гц близок к раскачке" % (p["wo"] * DT, WO_DT_MAX))
++    if lag and p["wo"] * lag > WO_L_MAX:
++        notes.append("wo*L = %.2f > %.1f: запаздывание измерения может раскачать контур" % (p["wo"] * lag, WO_L_MAX))
++    if p["wo"] < 3.0 * p["wc"]:
++        notes.append("wo < 3*wc: наблюдатель медленнее, чем нужно контуру")
++    return notes
++
++
++def equivalent_pi(p, b0):
++    """Эквивалентный ПИ + фильтр для обратной связи LADRC 1-го порядка (вывод - в разборе LADRC):
++    Kp = (wo^2 + 2 wo wc) / (b0 (wc + 2 wo)), Ti = (wo + 2 wc) / (wo wc), Tf = 1/(wc + 2 wo)"""
++    wc, wo = p["wc"], p["wo"]
++    kp = (wo * wo + 2 * wo * wc) / (b0 * (wc + 2 * wo))
++    ti = (wo + 2 * wc) / (wo * wc)
++    return kp, kp / ti, 1.0 / (wc + 2 * wo)
++
++
++def command(p, save=True):
++    return "$16;%.3f;%.2f;%.4f;%.4f;%d;%d;#" % (p["wc"], p["wo"], p["b0L"], p["b0R"], p["ff"], 1 if save else 0)
++
++
++def parse7(line):
++    """$7;mode;wc;wo;b0L;b0R;ff;# -> dict или None"""
++    m = re.search(r"\$7;([^#]*)#", line)
++    if not m:
++        return None
++    f = [x for x in m.group(1).split(";") if x]
++    if len(f) < 6:
++        return None
++    try:
++        return dict(mode=int(float(f[0])), wc=float(f[1]), wo=float(f[2]), b0L=float(f[3]), b0R=float(f[4]),
++                    ff=int(float(f[5])))
++    except ValueError:
++        return None
++
++
++def describe(p):
++    return ("регулятор %s; LADRC: wc %.2f рад/с (lambda %.3f с), wo %.1f рад/с, b0 L/R %.3f / %.3f, прямая подача: %s"
++            % (MODE_NAMES.get(p.get("mode", -1), "?"), p["wc"], 1.0 / p["wc"], p["wo"], p["b0L"], p["b0R"],
++               FF_NAMES.get(p["ff"], "?")))
++
++
++def print_params(p, title="Параметры LADRC"):
++    rows = []
++    for n in ("L", "R"):
++        b0 = p["b0" + n]
++        kp, ki, tf = equivalent_pi(p, b0)
++        rows.append([n, "%.2f" % p["wc"], "%.1f" % p["wo"], "%.3f" % b0, "%.3f" % kp, "%.2f" % ki, "%.1f" % (tf * 1000)])
++    ui.table(title, [("колесо", "center"), ("wc", "right"), ("wo", "right"), ("b0", "right"),
++                     ("Kp экв", "right"), ("Ki экв", "right"), ("Tf, мс", "right")], rows,
++             caption="wc, wo - рад/с; b0 - м/с² на 1.0 скважности. lambda = 1/wc = %.3f с; wo*dt = %.2f; прямая подача: %s. "
++                     "Kp/Ki экв - эквивалентный ПИ обратной связи (на м/с, как у $4), Tf - его фильтр"
++             % (1.0 / p["wc"], p["wo"] * DT, FF_NAMES.get(p["ff"], "?")))
++
++
++# ----------------------------------------------------------------------------------------------
++# Связь с платой
++# ----------------------------------------------------------------------------------------------
++def query(link, cmd, prefixes, wait=0.5, tries=3):
++    """Отправить cmd и собрать строки с заданными префиксами (по одной команде, с паузой)"""
++    got = []
++    for _ in range(tries):
++        link.send(cmd + "\r\n")
++        end = link.now() + wait
++        while link.now() < end:
++            link.sleep(0.01)
++            got += [ln for ln in link.poll() if ln.startswith(prefixes)]
++        if got:
++            return got
++    return got
++
++
++def read_params(link):
++    for ln in query(link, "$17;#", ("$7;",)):
++        p = parse7(ln)
++        if p:
++            return p
++    return None
++
++
++def open_link(a):
++    from mtcal import SerialLink
++    if not a.port:
++        sys.exit("Укажите --port")
++    return SerialLink(a.port, a.baud, a.boot_wait)
++
++
++def cmd_show(a):
++    link = open_link(a)
++    lines = query(link, "$13;#", ("$4;", "$6;", "$7;"))
++    lines += query(link, "$5;#", ("$2;",))
++    p = next((parse7(ln) for ln in lines if parse7(ln)), None)
++    ui.panel("\n".join(lines) if lines else "(плата не ответила)", "Ответ платы на $13 и $5", "blue")
++    if p is None:
++        ui.warn("Нет ответа $7: в плате прошивка без LADRC (нужна 2.4.0)")
++        return
++    ui.say(describe(p), "bold")
++    print_params(p)
++
++
++def cmd_mode(a):
++    link = open_link(a)
++    m = 1 if a.which == "ladrc" else 0
++    link.send("$15;%d;%d;#\r\n" % (m, 0 if a.no_save else 1))
++    link.sleep(0.3)
++    p = read_params(link)
++    if p is None:
++        sys.exit("Плата не ответила на $17: прошивка без LADRC?")
++    if p["mode"] != m:
++        sys.exit("Режим не переключился: плата сообщает %s" % MODE_NAMES.get(p["mode"], "?"))
++    ui.ok("Регулятор: %s%s" % (MODE_NAMES[m], "" if a.no_save else " (сохранено во flash)"))
++    ui.say(describe(p), "dim")
++
++
++def cmd_set(a):
++    link = open_link(a)
++    p = read_params(link)
++    if p is None:
++        sys.exit("Плата не ответила на $17: прошивка без LADRC?")
++    if a.lambda_s:
++        p["wc"] = 1.0 / a.lambda_s
++    if a.wc:
++        p["wc"] = a.wc
++    if a.wo_mult:
++        p["wo"] = a.wo_mult * p["wc"]
++    if a.wo:
++        p["wo"] = a.wo
++    if a.b0:
++        p["b0L"], p["b0R"] = (float(x) for x in a.b0.split(","))
++    if a.ff is not None:
++        p["ff"] = a.ff
++    for n in check(p):
++        ui.warn(n)
++    c = command(p, not a.no_save)
++    link.send(c + "\r\n")
++    link.sleep(0.3)
++    q = read_params(link)
++    ui.panel(c, "Отправлено", "green")
++    if q is None:
++        sys.exit("Плата не ответила на $17")
++    ui.say(describe(q), "bold")
++    print_params(q, "Параметры LADRC в плате")
++
++
++def cmd_fit(a):
++    from mtcal import fit_static, fit_step, load_csv
++    log = load_csv(a.csv)
++    st, sp = fit_static(log), fit_step(log)
++    p, notes = recommend(st, sp, a.radius, a.wc, a.lambda_s, a.wo, a.wo_mult, a.ff)
++    model = [[n, "%.2f" % st[n][0], "%.0f" % (sp[n][0] * 1000), "%.0f" % (sp[n][1] * 1000),
++              "%.3f" % (st[n][0] * TWO_PI * a.radius)] for n in ("L", "R")]
++    ui.table("Модель колёс по калибровке", [("колесо", "center"), ("Kv, об/с на 1.0", "right"), ("Tm, мс", "right"),
++                                            ("L, мс", "right"), ("K, м/с на 1.0", "right")], model,
++             caption="b0 = K/Tm. Калибровка в воздухе: на полу Tm больше, значит истинный b0 меньше - "
++                     "воздушный b0 завышен, это безопасная сторона")
++    print_params(p, "Рекомендуемые параметры LADRC")
++    for n in notes:
++        ui.warn(n)
++    c = command(p, True)
++    ui.panel(c + "\n$15;1;1;#", "Команды для платы: параметры LADRC, затем переключение на LADRC (оба с сохранением)", "green")
++    ui.say("Вернуть ПИ: $15;0;1;#  (или python3 adrc.py mode pi --port ...)", "dim")
++    if a.apply:
++        link = open_link(a)
++        link.send(c + "\r\n")
++        link.sleep(0.3)
++        q = read_params(link)
++        ui.say(describe(q) if q else "(плата не ответила на $17)", "bold")
++        ui.say("Регулятор не переключён: python3 adrc.py mode ladrc --port %s" % a.port, "dim")
++
++
++def main():
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    sub = ap.add_subparsers(dest="cmd", required=True)
++    f = sub.add_parser("fit", help="параметры LADRC по логу калибровки mtcal")
++    f.add_argument("csv")
++    f.add_argument("--radius", type=float, default=0.065 / 2)
++    f.add_argument("--apply", action="store_true", help="записать параметры в плату (с сохранением)")
++    s = sub.add_parser("set", help="поменять параметры LADRC в плате")
++    s.add_argument("--b0", help="b0 левого и правого колеса через запятую, (м/с^2) на 1.0")
++    s.add_argument("--no-save", action="store_true", help="не сохранять во flash (пропадёт при следующем открытии порта)")
++    for p in (f, s):
++        p.add_argument("--wc", type=float, help="полоса контура, рад/с")
++        p.add_argument("--lambda-s", type=float, help="желаемая постоянная времени, с (wc = 1/lambda)")
++        p.add_argument("--wo", type=float, help="полоса наблюдателя, рад/с")
++        p.add_argument("--wo-mult", type=float, default=None, help="wo = K*wc (по умолчанию в fit 5)")
++        p.add_argument("--ff", type=int, choices=(0, 1, 2), default=None,
++                       help="прямая подача: 0 нет, 1 мёртвая зона, 2 полный FF (в fit по умолчанию 2)")
++    m = sub.add_parser("mode", help="выбрать регулятор")
++    m.add_argument("which", choices=("pi", "ladrc"))
++    m.add_argument("--no-save", action="store_true", help="не сохранять во flash")
++    sh = sub.add_parser("show", help="показать параметры в плате")
++    for p in (f, s, m, sh):
++        p.add_argument("--port")
++        p.add_argument("--baud", type=int, default=115200)
++        p.add_argument("--boot-wait", type=float, default=5.0, help="пауза на загрузку платы после открытия порта, с")
++    a = ap.parse_args()
++    if a.cmd == "fit":
++        a.wo_mult = a.wo_mult or 5.0
++        a.ff = 2 if a.ff is None else a.ff
++        cmd_fit(a)
++    elif a.cmd == "set":
++        cmd_set(a)
++    elif a.cmd == "mode":
++        cmd_mode(a)
++    else:
++        cmd_show(a)
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN v23/tools/console.py v24/tools/console.py
+--- v23/tools/console.py	1970-01-01 03:00:00.000000000 +0300
++++ v24/tools/console.py	2026-10-29 22:17:03.951455364 +0300
+@@ -0,0 +1,257 @@
++#!/usr/bin/env python3
++# Copyright (c) 2026 Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
++# SPDX-License-Identifier: MIT
++"""
++Консоль для платы: отправить команду и увидеть ответ, не утопая в потоке одометрии.
++
++    python3 console.py --port /dev/ttyUSB0          (Windows: --port COM5)
++    python3 console.py --port /dev/ttyUSB0 --show-odom      # показывать и одометрию $1
++    python3 console.py --port /dev/ttyUSB0 --log session.txt
++
++По умолчанию скрыты одометрия $1 (50 Гц) и телеметрия $3 (100 Гц, после $12;1). Всё остальное
++(ответы $2/$4/$6/$7, сообщения прошивки при загрузке и ошибки) печатается с отметкой времени,
++а известные ответы ещё и расшифровываются по полям.
++
++Команды платы вводятся как есть: $13;#   $5;#   $15;1;0#
++'#' в конце можно не писать - консоль допишет. Свои команды консоли:
++  hold <команда>   повторять команду раз в 0.3 с (иначе через 1 с без команд плата делает
++                   аварийную остановку), например: hold $2;0.1;0.1;#
++  stop             прекратить hold и отправить $2;0;0;#
++  odom / tel       включить или выключить показ $1 / $3
++  last             показать последнюю строку одометрии (даже если она скрыта)
++  q, quit, exit    выход (перед выходом отправляется $2;0;0;#)
++  help             эта справка
++Нужен pyserial: pip install pyserial
++"""
++import argparse
++import sys
++import threading
++import time
++
++try:
++    import readline  # noqa: F401  история команд стрелками (Linux/macOS)
++    HAVE_READLINE = True
++except ImportError:
++    HAVE_READLINE = False
++
++PROMPT = "> "
++HOLD_PERIOD = 0.3
++
++# Расшифровка ответов платы: тип -> (название, поля)
++FIELDS = {
++    "1": ("одометрия", ["x", "y", "курс", "v", "w", "vL", "vR"]),
++    "2": ("ПИ", ["Kp_L", "Ki_L", "Kd_L", "Kp_R", "Ki_R", "Kd_R"]),
++    "3": ("телеметрия", ["t_us", "refL", "vL", "uL", "refR", "vR", "uR"]),
++    "4": ("feedforward", ["gain_L", "dz_L", "gain_R", "dz_R"]),
++    "6": ("фильтр уставки", ["tau, с"]),
++    "7": ("регулятор", ["режим", "wc", "wo", "b0_L", "b0_R", "ff"]),
++}
++MODE = {"0": "ПИ", "1": "LADRC"}
++FF = {"0": "нет", "1": "мёртвая зона", "2": "полный FF"}
++
++USE_COLOR = sys.stdout.isatty()
++if USE_COLOR and sys.platform == "win32":
++    import os
++    os.system("")   # включает ANSI-цвета в консоли Windows 10+
++
++
++def color(text, code):
++    return "\033[%sm%s\033[0m" % (code, text) if USE_COLOR else text
++
++
++def decode(line):
++    """'$4;0.5;0.3;0.8;0.31;#' -> 'feedforward: gain_L=0.5 ...' или None"""
++    if not line.startswith("$") or ";" not in line:
++        return None
++    body = line[1:].split("#", 1)[0]
++    parts = [p for p in body.split(";") if p != ""]
++    if not parts or parts[0] not in FIELDS:
++        return None
++    name, names = FIELDS[parts[0]]
++    vals = parts[1:]
++    pairs = []
++    for i, v in enumerate(vals):
++        key = names[i] if i < len(names) else "?%d" % i
++        if parts[0] == "7" and key == "режим":
++            v = MODE.get(v, v)
++        if parts[0] == "7" and key == "ff":
++            v = FF.get(v, v)
++        pairs.append("%s=%s" % (key, v))
++    return "%s: %s" % (name, "  ".join(pairs))
++
++
++class Console:
++    def __init__(self, ser, show_odom=False, show_tel=False, log=None):
++        self.ser = ser
++        self.show = {"1": show_odom, "3": show_tel}
++        self.log = log
++        self.lock = threading.Lock()
++        self.alive = True
++        self.hold_cmd = None
++        self.hidden = {"1": 0, "3": 0}
++        self.last_odom = ""
++        self.t0 = time.monotonic()
++
++    # ---------- вывод, не ломающий строку ввода
++    def out(self, text):
++        with self.lock:
++            buf = ""
++            if HAVE_READLINE and sys.stdin.isatty():
++                import readline as rl
++                buf = rl.get_line_buffer()
++                sys.stdout.write("\r\033[K")
++            sys.stdout.write(text + "\n")
++            if HAVE_READLINE and sys.stdin.isatty():
++                sys.stdout.write(PROMPT + buf)
++            sys.stdout.flush()
++            if self.log:
++                self.log.write(text + "\n")
++                self.log.flush()
++
++    def stamp(self):
++        return "%7.2f" % (time.monotonic() - self.t0)
++
++    # ---------- приём
++    def reader(self):
++        buf = b""
++        while self.alive:
++            try:
++                chunk = self.ser.read(self.ser.in_waiting or 1)
++            except Exception as e:  # порт пропал (кабель, перезагрузка)
++                self.out(color("порт: %s" % e, "31"))
++                self.alive = False
++                return
++            if not chunk:
++                continue
++            buf += chunk
++            while b"\n" in buf:
++                raw, buf = buf.split(b"\n", 1)
++                line = raw.decode("ascii", "replace").strip()
++                if line:
++                    self.handle(line)
++
++    def handle(self, line):
++        typ = line[1:].split(";", 1)[0] if line.startswith("$") else None
++        if typ == "1":
++            self.last_odom = line
++        if typ in self.show and not self.show[typ]:
++            self.hidden[typ] += 1
++            return
++        dec = decode(line)
++        text = "%s  <  %s" % (self.stamp(), line)
++        if dec:
++            text += "\n" + " " * 12 + color(dec, "36")
++        elif not line.startswith("$"):
++            text = "%s  <  %s" % (self.stamp(), color(line, "33"))   # текст прошивки: загрузка, ошибки
++        self.out(text)
++
++    # ---------- отправка
++    def send(self, cmd, echo=True):
++        if not cmd.endswith("#"):
++            cmd += "#"
++        try:
++            self.ser.write((cmd + "\r\n").encode("ascii"))
++        except Exception as e:
++            self.out(color("не отправлено: %s" % e, "31"))
++            return
++        if echo:
++            self.out("%s  >  %s" % (self.stamp(), color(cmd, "1")))
++
++    def holder(self):
++        while self.alive:
++            time.sleep(HOLD_PERIOD)
++            cmd = self.hold_cmd
++            if cmd:
++                self.send(cmd, echo=False)
++
++    # ---------- ввод
++    def command(self, line):
++        s = line.strip()
++        if not s:
++            return True
++        low = s.lower()
++        if low in ("q", "quit", "exit"):
++            return False
++        if low == "help":
++            self.out(__doc__)
++        elif low in ("odom", "tel"):
++            k = "1" if low == "odom" else "3"
++            self.show[k] = not self.show[k]
++            self.out("показ %s: %s" % ("$1" if k == "1" else "$3", "вкл" if self.show[k] else "выкл"))
++        elif low == "last":
++            self.out(self.last_odom or "(одометрии ещё не было)")
++            if self.last_odom:
++                self.out(" " * 12 + color(decode(self.last_odom) or "", "36"))
++        elif low == "stop":
++            self.hold_cmd = None
++            self.send("$2;0;0;#")
++        elif low.startswith("hold"):
++            cmd = s[4:].strip()
++            if not cmd.startswith("$"):
++                self.out("пример: hold $2;0.1;0.1;#")
++            else:
++                self.hold_cmd = cmd if cmd.endswith("#") else cmd + "#"
++                self.send(self.hold_cmd)
++                self.out("повторяю раз в %.1f с; stop - остановить" % HOLD_PERIOD)
++        elif s.startswith("$"):
++            self.send(s)
++        else:
++            self.out("не понял: команды платы начинаются с '$' (например $13;#), help - справка")
++        return True
++
++    def status_hidden(self):
++        n1, n3 = self.hidden["1"], self.hidden["3"]
++        self.hidden = {"1": 0, "3": 0}
++        return "скрыто: одометрия $1 - %d, телеметрия $3 - %d" % (n1, n3)
++
++
++def main():
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    ap.add_argument("--port", required=True, help="например /dev/ttyUSB0 или COM5")
++    ap.add_argument("--baud", type=int, default=115200)
++    ap.add_argument("--show-odom", action="store_true", help="показывать одометрию $1")
++    ap.add_argument("--show-tel", action="store_true", help="показывать телеметрию $3")
++    ap.add_argument("--log", help="дописывать весь показанный вывод в файл")
++    a = ap.parse_args()
++
++    try:
++        import serial
++    except ImportError:
++        sys.exit("Нужен pyserial: pip install pyserial")
++    try:
++        ser = serial.serial_for_url(a.port, a.baud, timeout=0.1)
++    except Exception as e:
++        sys.exit("Не открыть %s: %s (порт занят Arduino IDE / ROS?)" % (a.port, e))
++
++    log = open(a.log, "a", encoding="utf-8") if a.log else None
++    con = Console(ser, a.show_odom, a.show_tel, log)
++    threading.Thread(target=con.reader, daemon=True).start()
++    threading.Thread(target=con.holder, daemon=True).start()
++    con.out(color("Порт %s открыт. Плата перезагружается (3-5 с), сообщения загрузки будут видны. "
++                  "help - справка, q - выход." % a.port, "2"))
++    try:
++        while con.alive:
++            try:
++                line = input(PROMPT if sys.stdin.isatty() else "")
++            except EOFError:
++                break
++            if not con.command(line):
++                break
++            if not sys.stdin.isatty():
++                time.sleep(0.4)   # команды из файла/канала: пауза, чтобы плата не теряла их встык
++    except KeyboardInterrupt:
++        pass
++    finally:
++        con.hold_cmd = None
++        if con.alive:
++            con.send("$2;0;0;#", echo=False)
++            time.sleep(0.2)
++        con.alive = False
++        con.out(con.status_hidden())
++        ser.close()
++        if log:
++            log.close()
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN v23/tools/host_test/Makefile v24/tools/host_test/Makefile
+--- v23/tools/host_test/Makefile	2026-10-28 20:52:30.510979150 +0300
++++ v24/tools/host_test/Makefile	2026-10-29 22:17:03.950737123 +0300
+@@ -6,7 +6,7 @@
+ CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter
+ STUBS = -Istubs -I$(UPID_DIR)
+ 
+-all: sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue
++all: test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue
+ 
+ sim_new: sim_new.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
+ 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_new.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
+@@ -20,12 +20,18 @@
+ sim_sync: sim_sync.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
+ 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_sync.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
+ 
++sim_ladrc: sim_ladrc.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
++	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_ladrc.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
++
+ sim_sweep: sim_sweep.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
+ 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_sweep.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
+ 
+ sim_old: sim_old.cpp sim_run.h sim_common.h orig/motor_controller.cpp stubs/stubs.cpp
+ 	$(CXX) $(CXXFLAGS) $(STUBS) -Iorig -I. sim_old.cpp orig/motor_controller.cpp stubs/stubs.cpp -o $@
+ 
++test_estimator_aligned: test_estimator_aligned.cpp sim_common.h $(FW)/speed_estimator.h
++	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. test_estimator_aligned.cpp -o $@
++
+ test_estimator: test_estimator.cpp sim_common.h $(FW)/speed_estimator.h stubs/stubs.cpp
+ 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. test_estimator.cpp stubs/stubs.cpp -o $@
+ 
+@@ -46,9 +52,10 @@
+ test: all
+ 	./test_glue
+ 	./test_estimator
++	./test_estimator_aligned
+ 	./test_encoders_equiv
+ 	./sim_old
+ 	./sim_new
+ 
+ clean:
+-	rm -f test_glue sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv *.o trace_new.csv
++	rm -f test_glue test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv *.o trace_new.csv
+Binary files v23/tools/host_test/enc_new.o and v24/tools/host_test/enc_new.o differ
+Binary files v23/tools/host_test/enc_old.o and v24/tools/host_test/enc_old.o differ
+diff -ruN v23/tools/host_test/sim_common.h v24/tools/host_test/sim_common.h
+--- v23/tools/host_test/sim_common.h	2026-10-28 20:52:30.513667981 +0300
++++ v24/tools/host_test/sim_common.h	2026-10-29 22:17:03.951391159 +0300
+@@ -35,6 +35,8 @@
+ struct EdgeSim {
+   int32_t edges = 0;     // накопленная позиция, фронтов
+   uint32_t tLast = 0;    // время последнего фронта, мкс
++  uint32_t ph[4] = {0, 0, 0, 0};  // время последнего фронта каждого типа (id & 3), как в encoders.cpp
++  int8_t dir = 1;        // направление последнего фронта
+   double asym = 0.0;
+   static double pat(int k) { static const double e[4] = {0.0, 1.0, -0.5, 0.5}; return e[k & 3]; }
+   double pos(int k) const { return k + asym * pat(k); }
+@@ -45,10 +47,12 @@
+     while (x1 >= pos(edges + 1)) {
+       const double f = (pos(edges + 1) - x0) / (x1 - x0);
+       ++edges; tLast = (uint32_t)(t0_us + std::max(0.0, std::min(1.0, f)) * dt_us);
++      ph[(uint32_t)edges & 3u] = tLast; dir = 1;
+     }
+     while (x1 < pos(edges)) {
+       const double f = (pos(edges) - x0) / (x1 - x0);
+       --edges; tLast = (uint32_t)(t0_us + std::max(0.0, std::min(1.0, f)) * dt_us);
++      ph[(uint32_t)(edges + 1) & 3u] = tLast; dir = -1;
+     }
+   }
+ };
+diff -ruN v23/tools/host_test/sim_ladrc.cpp v24/tools/host_test/sim_ladrc.cpp
+--- v23/tools/host_test/sim_ladrc.cpp	1970-01-01 03:00:00.000000000 +0300
++++ v24/tools/host_test/sim_ladrc.cpp	2026-10-29 22:17:03.951411351 +0300
+@@ -0,0 +1,94 @@
++// ПИ против LADRC на настоящем коде прошивки (motor_controller.cpp + оценка скорости M/T + модель энкодеров).
++// Оба колеса, ступенька с места; синхронность: max|wL - wR| и набег курса. Плюс проверка безударного
++// переключения режима на ходу. Параметры моделей - допущения (как в sim_sync.cpp), а не измерения.
++#include "new_chain.h"
++
++struct Cfg { const char *name; bool adrc; float wc, wo; int ff; float tau; };
++
++static void scenario(const char *title, PlantParams L, PlantParams R) {
++  printf("\n=== %s ===\n", title);
++  // ПИ: общая lambda 0.2 с по воздушной калибровке, FF по полу (то, что сейчас в плате);
++  // LADRC: b0 по воздуху, прямая подача (если включена) - тот же FF по полу
++  const Cfg cfgs[] = {
++    {"ПИ, общая lambda 0.2, FF пол         ", false, 0, 0, 0, 0.0f},
++    {"ПИ + фильтр уставки 0.15             ", false, 0, 0, 0, 0.0f + 0.15f},
++    {"LADRC wc 5, wo 25, без FF            ", true, 5, 25, 0, 0.0f},
++    {"LADRC wc 5, wo 25, FF мёртвая зона   ", true, 5, 25, 1, 0.0f},
++    {"LADRC wc 5, wo 25, полный FF         ", true, 5, 25, 2, 0.0f},
++    {"LADRC wc 5, wo 15, полный FF         ", true, 5, 15, 2, 0.0f},
++    {"LADRC wc 5, wo 40, полный FF         ", true, 5, 40, 2, 0.0f},
++    {"LADRC wc 9, wo 40, полный FF         ", true, 9, 40, 2, 0.0f},
++    {"LADRC wc 5, wo 25, полн.FF + фильтр  ", true, 5, 25, 2, 0.15f},
++  };
++  MTSpeedParams sp = {1.0f / 1080.0f, 60000, 2, 6.0f, 1.0f};
++  for (double r : {0.2, 0.5, 1.2}) {
++    printf("\nуставка %.1f об/с\n%-38s %7s %7s %8s %8s %9s %9s\n", r, "вариант", "t90 L", "t90 R", "пер.L,%", "пер.R,%", "max|dW|", "курс,гр");
++    for (const Cfg &c : cfgs) {
++      NewChain ch(sp, 0.463f, 2.66f, 0.0f, 0.5151f, 0.2992f);
++      ch.ctl.setPID(0.463f, 2.66f, 0, 0.594f, 4.153f, 0);
++      ch.ctl.setFeedforward(0.5151f, 0.2992f, 0.8424f, 0.3101f);
++      ch.ctl.setRefFilter(c.tau);
++      ch.ctl.setAdrc(c.wc, c.wo, 9.82f, 7.65f, (uint8_t)c.ff);
++      ch.ctl.setControlMode(c.adrc ? ControlMode::kLadrc : ControlMode::kPi);
++      RunResult res = runStep(ch, r, 3.0, 0.0, R, L);
++      printf("%-38s %7.0f %7.0f %8.1f %8.1f %9.3f %9.2f\n", c.name, res.left.rise90 * 1000, res.right.rise90 * 1000,
++             res.left.overshootPct, res.right.overshootPct, res.maxDiffRev, res.peakYawDeg);
++    }
++  }
++}
++
++// Переключение режима на ходу: наибольший скачок скважности за такт в окне переключения
++// против такого же скачка в обычной работе (до переключения)
++static void bumpless(PlantParams L, PlantParams R) {
++  printf("\n=== Безударное переключение на ходу (пол, 0.8 об/с, переключение в 1.5 с и обратно в 2.5 с) ===\n");
++  MTSpeedParams sp = {1.0f / 1080.0f, 60000, 2, 6.0f, 1.0f};
++  for (int startAdrc = 0; startAdrc < 2; ++startAdrc) {
++    NewChain ch(sp, 0.463f, 2.66f, 0.0f, 0.5151f, 0.2992f);
++    ch.ctl.setPID(0.463f, 2.66f, 0, 0.594f, 4.153f, 0);
++    ch.ctl.setFeedforward(0.5151f, 0.2992f, 0.8424f, 0.3101f);
++    ch.ctl.setRefFilter(0.0f);
++    ch.ctl.setAdrc(5, 25, 9.82f, 7.65f, 2);
++    ch.ctl.setControlMode(startAdrc ? ControlMode::kLadrc : ControlMode::kPi);
++    Wheel wr, wl; wr.p = R; wl.p = L;
++    EdgeSim er, el;
++    const double dt = 50e-6; double next = ch.periodUs; float prevU = 0; double jumpNormal = 0, jumpSwitch = 0;
++    double wMin = 1e9, wMax = 0; bool sw1 = false, sw2 = false;
++    const double r = 0.8 * REV_TO_MS;
++    for (double t = 0; t < 3.5; t += dt) {
++      if (t >= 0.0 && t < dt) ch.command(r);
++      if (!sw1 && t >= 1.5) { ch.ctl.setControlMode(startAdrc ? ControlMode::kPi : ControlMode::kLadrc); sw1 = true; }
++      if (!sw2 && t >= 2.5) { ch.ctl.setControlMode(startAdrc ? ControlMode::kLadrc : ControlMode::kPi); sw2 = true; }
++      if (t * 1e6 >= next) {
++        g_micros = (unsigned long)(t * 1e6);
++        if (fmod(t, 0.5) < 0.0101) ch.command(r);   // не дать сработать аварийной остановке не нужно: это не .ino
++        ch.tick((uint32_t)(t * 1e6), el, er);
++        next += ch.periodUs;
++        const float u = (float)ch.dutyL();
++        const double d = fabs(u - prevU);
++        if (t > 1.0 && t < 1.45) jumpNormal = std::max(jumpNormal, d);
++        if ((t > 1.5 && t < 1.53) || (t > 2.5 && t < 2.53)) jumpSwitch = std::max(jumpSwitch, d);
++        prevU = u;
++      }
++      const double thR0 = wr.theta, thL0 = wl.theta;
++      wr.step(ch.dutyR(), dt); wl.step(ch.dutyL(), dt);
++      er.advance(thR0, wr.theta, t * 1e6, dt * 1e6);
++      el.advance(-thL0, -wl.theta, t * 1e6, dt * 1e6);
++      if (t > 1.5 && t < 3.0) { wMin = std::min(wMin, wl.w); wMax = std::max(wMax, wl.w); }
++    }
++    printf("%s: скачок скважности за такт в обычной работе %.4f, в моменты переключения %.4f; скорость L в 1.5-3 с: %.3f..%.3f об/с\n",
++           startAdrc ? "LADRC -> ПИ -> LADRC" : "ПИ -> LADRC -> ПИ", jumpNormal, jumpSwitch, wMin, wMax);
++  }
++}
++
++int main() {
++  PlantParams L, R;
++  L.Tm = 0.174; L.Kv = 8.37; L.dz = 0.107; L.dBreak = 0.18;
++  R.Tm = 0.143; R.Kv = 5.36; R.dz = 0.111; R.dBreak = 0.20;
++  scenario("ВОЗДУХ", L, R);
++  PlantParams L2 = L, R2 = R;
++  L2.Tm = 0.25; L2.dz = 0.30; L2.dBreak = 0.42;
++  R2.Tm = 0.20; R2.dz = 0.31; R2.dBreak = 0.49;
++  scenario("ПОЛ (Tm больше, мёртвая зона и трение покоя выше; b0 LADRC по воздуху)", L2, R2);
++  bumpless(L2, R2);
++  return 0;
++}
+diff -ruN v23/tools/host_test/stubs/Arduino.h v24/tools/host_test/stubs/Arduino.h
+--- v23/tools/host_test/stubs/Arduino.h	2026-10-28 20:52:30.511851073 +0300
++++ v24/tools/host_test/stubs/Arduino.h	2026-10-29 22:17:03.950936163 +0300
+@@ -16,6 +16,18 @@
+ #define LOW 0
+ #define CHANGE 3
+ #define constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
++// Макросы из настоящего Arduino.h (ESP32 core 3.x): без них хост-тест не заметит конфликт имён
++// (так ControlMode::PI собирался на ПК и ломался в Arduino IDE)
++#define PI 3.1415926535897932384626433832795
++#define HALF_PI 1.5707963267948966192313216916398
++#define TWO_PI 6.283185307179586476925286766559
++#define DEG_TO_RAD 0.017453292519943295769236907684886
++#define RAD_TO_DEG 57.295779513082320876798154814105
++#define EULER 2.718281828459045235360287471352
++#define SERIAL 0x0
++#define DISPLAY 0x1
++#define LSBFIRST 0
++#define MSBFIRST 1
+ 
+ // Время задаёт тест
+ extern unsigned long g_micros;
+diff -ruN v23/tools/host_test/stubs/Preferences.h v24/tools/host_test/stubs/Preferences.h
+--- v23/tools/host_test/stubs/Preferences.h	2026-10-28 20:52:30.512439133 +0300
++++ v24/tools/host_test/stubs/Preferences.h	2026-10-29 22:17:03.951098629 +0300
+@@ -14,6 +14,11 @@
+   }
+   void putFloat(const char *k, float v) { store()[_ns + "/" + k] = v; }
+   void putBool(const char *k, bool v) { store()[_ns + "/" + k] = v ? 1.0f : 0.0f; }
++  int32_t getInt(const char *k, int32_t def = 0) {
++    auto it = store().find(_ns + "/" + k);
++    return it == store().end() ? def : (int32_t)it->second;
++  }
++  void putInt(const char *k, int32_t v) { store()[_ns + "/" + k] = (float)v; }
+ private:
+   std::string _ns;
+   static std::map<std::string, float> &store() { static std::map<std::string, float> m; return m; }
+diff -ruN v23/tools/host_test/test_encoders_equiv.cpp v24/tools/host_test/test_encoders_equiv.cpp
+--- v23/tools/host_test/test_encoders_equiv.cpp	2026-10-28 20:52:30.511024646 +0300
++++ v24/tools/host_test/test_encoders_equiv.cpp	2026-10-29 22:17:03.950756288 +0300
+@@ -48,7 +48,20 @@
+   for (int k = 0; k < 4; ++k) { g_micros += 100; g_pins[seqA[k]] ^= 1; (seqA[k] == 34 ? Encoders::_readR_A : Encoders::_readR_B)(); }
+   int32_t t1; uint32_t tt1; Encoders::snapshotRight(t1, tt1);
+   printf("цикл 11->01->00->10->11: total изменился на %d, время последнего фронта %u (g_micros=%lu)\n", t1 - t0, tt1, g_micros);
+-  const bool ok = (mism == 0) && (t1 - t0 == 4) && (tt1 == (uint32_t)g_micros);
++  const bool lastOk = (tt1 == (uint32_t)g_micros);
++  // Время по типам фронтов: после 4 фронтов вперёд все 4 записи свежие (с шагом 100 мкс),
++  // запись последнего фронта = время последнего фронта; назад - тот же фронт получает тот же id
++  int32_t tp; uint32_t ph[4]; int8_t dir;
++  Encoders::snapshotRightPhases(tp, ph, dir);
++  bool phOk = (dir == 1) && (ph[(uint32_t)tp & 3u] == tt1);
++  for (int k = 1; k < 4; ++k) phOk = phOk && (ph[(uint32_t)(tp - k) & 3u] == tt1 - 100u * k);
++  // шаг назад через последний фронт: позиция tp -> tp-1, id того же фронта = tp
++  g_micros += 100; g_pins[seqA[3]] ^= 1; (seqA[3] == 34 ? Encoders::_readR_A : Encoders::_readR_B)();
++  int32_t tq; uint32_t pq[4]; int8_t dq;
++  Encoders::snapshotRightPhases(tq, pq, dq);
++  phOk = phOk && (tq == tp - 1) && (dq == -1) && (pq[(uint32_t)tp & 3u] == (uint32_t)g_micros);
++  printf("время по типам фронтов (вперёд и шаг назад): %s\n", phOk ? "верно" : "ОШИБКА");
++  const bool ok = (mism == 0) && (t1 - t0 == 4) && lastOk && phOk;
+   printf("%s\n", ok ? "PASS" : "FAIL");
+   return ok ? 0 : 1;
+ }
+diff -ruN v23/tools/host_test/test_estimator_aligned.cpp v24/tools/host_test/test_estimator_aligned.cpp
+--- v23/tools/host_test/test_estimator_aligned.cpp	1970-01-01 03:00:00.000000000 +0300
++++ v24/tools/host_test/test_estimator_aligned.cpp	2026-10-29 22:17:03.951432742 +0300
+@@ -0,0 +1,90 @@
++// Окно из целого числа меток (MTSpeedEstimator::updateAligned) против прежней оценки на энкодере
++// с неравномерной квадратурой. asym = 0.5: один из фронтов сдвинут на ~0.5 интервала, как
++// показал опыт noisetest на роботе (иглы 0.4-0.55 фронта на окно).
++#include "sim_common.h"
++#include "speed_estimator.h"
++#include <stdio.h>
++#include <vector>
++
++static int failures = 0;
++static void check(bool ok, const char *what) { printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what); if (!ok) ++failures; }
++
++struct Res { double rms, mx, lagMs; std::vector<double> t, est, truth; };
++
++template <class F>
++static Res run(F wOf, double T, bool aligned, double asym, int minEdges = 2, uint32_t tOff = 0, uint32_t posOff = 0,
++               double t0 = 0.5, double t1 = 1e9) {
++  MTSpeedParams p = {1.0f / 1080.0f, 60000, minEdges, 6.0f, 1.0f, aligned};
++  MTSpeedEstimator est(p);
++  EdgeSim e; e.asym = asym;
++  double th = 0; Res r{}; double s2 = 0; int n = 0;
++  const double dt = 10e-6; double next = 10000;
++  for (double tt = 0; tt < T; tt += dt) {
++    const double w = wOf(tt), th1 = th + w * dt;
++    e.advance(th, th1, tt * 1e6, dt * 1e6); th = th1;
++    if (tt * 1e6 >= next) {
++      next += 10000;
++      uint32_t ph[4]; for (int i = 0; i < 4; ++i) ph[i] = e.ph[i] + tOff;
++      const uint32_t now = (uint32_t)((uint64_t)(tt * 1e6) + tOff);
++      const float v = est.updateAligned((int32_t)((uint32_t)e.edges + posOff), ph, e.dir, now);
++      r.t.push_back(tt); r.est.push_back(v); r.truth.push_back(w);
++      if (tt >= t0 && tt <= t1 && fabs(w) > 1e-6) { const double rel = (v - w) / w; s2 += rel * rel; r.mx = std::max(r.mx, fabs(rel)); ++n; }
++    }
++  }
++  r.rms = n ? sqrt(s2 / n) : 0; return r;
++}
++
++int main() {
++  printf("1) Постоянная скорость, квадратура с перекосом 0.5 интервала: прежняя оценка против целых меток\n");
++  printf("   %8s %14s %14s %14s %14s\n", "об/с", "прежняя СКО,%", "прежняя max,%", "метки СКО,%", "метки max,%");
++  bool allGood = true, allBetter = true;
++  for (double w : {0.2, 0.37, 0.7, 0.91, 1.57, 2.6, 3.5}) {
++    Res a = run([&](double) { return w; }, 3.0, false, 0.5);
++    Res b = run([&](double) { return w; }, 3.0, true, 0.5);
++    printf("   %8.2f %14.2f %14.2f %14.3f %14.3f\n", w, a.rms * 100, a.mx * 100, b.rms * 100, b.mx * 100);
++    if (b.mx > 0.01) allGood = false;
++    if (w >= 0.37 && b.rms > 0.25 * a.rms) allBetter = false;
++  }
++  check(allGood, "с целыми метками ошибка < 1 % на всех скоростях");
++  check(allBetter, "с 0.37 об/с и выше СКО меньше прежней хотя бы вчетверо");
++
++  printf("2) Идеальная квадратура: целые метки не хуже прежнего\n");
++  {
++    Res b = run([](double) { return 1.0; }, 2.0, true, 0.0);
++    check(b.mx < 0.002, "ошибка < 0.2 % на 1 об/с");
++  }
++  printf("3) Малая скорость 0.05 об/с и запаздывание\n");
++  {
++    Res b = run([](double) { return 0.05; }, 6.0, true, 0.5, 2, 0, 0, 2.0);
++    printf("   СКО %.2f %%, max %.2f %%\n", b.rms * 100, b.mx * 100);
++    check(b.mx < 0.02, "0.05 об/с: ошибка < 2 %");
++  }
++  printf("4) Разгон 0 -> 2 об/с за 0.5 с, торможение до нуля и реверс\n");
++  {
++    auto prof = [](double t) { return t < 0.2 ? 0.0 : t < 0.7 ? 4.0 * (t - 0.2) : t < 1.5 ? 2.0 : t < 2.0 ? 2.0 - 4.0 * (t - 1.5) : t < 2.5 ? -4.0 * (t - 2.0) : -2.0; };
++    Res b = run(prof, 3.5, true, 0.5, 2, 0, 0, 0.9, 1.4);
++    check(b.mx < 0.01, "на постоянных 2 об/с после разгона ошибка < 1 %");
++    double atStop = 1, atRev = 0;
++    for (size_t i = 0; i < b.t.size(); ++i) {
++      if (fabs(b.t[i] - 2.0) < 0.006) atStop = b.est[i];
++      if (b.t[i] > 3.2 && b.t[i] < 3.5) atRev = std::min(atRev, b.est[i]);
++    }
++    printf("   оценка около остановки (истина 0): %.3f об/с, после реверса: %.3f об/с\n", atStop, atRev);
++    check(fabs(atStop) < 0.15, "у нуля скорость не залипает");
++    Res r = run(prof, 3.5, true, 0.5, 2, 0, 0, 3.0, 3.5);
++    check(r.mx < 0.01, "после реверса на -2 об/с ошибка < 1 %");
++  }
++  printf("5) Переполнение счётчиков времени и позиции\n");
++  {
++    Res b = run([](double) { return 1.3; }, 2.0, true, 0.5, 2, 0xFFFFFFFFu - 600000u, 0x7FFFFFF0u);
++    check(b.mx < 0.01, "ошибка < 1 % при переполнении micros() и позиции");
++  }
++  printf("6) Торможение до остановки: оценка спадает к нулю\n");
++  {
++    auto prof = [](double t) { return t < 1.0 ? 1.0 : std::max(0.0, 1.0 - 2.0 * (t - 1.0)); };
++    Res b = run(prof, 2.5, true, 0.5);
++    check(fabs(b.est.back()) < 1e-6, "через 1 с после остановки оценка 0");
++  }
++  printf("\n%s (%d не прошло)\n", failures ? "ЕСТЬ ОШИБКИ" : "ВСЕ ПРОВЕРКИ ПРОШЛИ", failures);
++  return failures ? 1 : 0;
++}
+diff -ruN v23/tools/host_test/test_glue.cpp v24/tools/host_test/test_glue.cpp
+--- v23/tools/host_test/test_glue.cpp	2026-10-28 20:52:30.510864155 +0300
++++ v24/tools/host_test/test_glue.cpp	2026-10-29 22:17:03.950651112 +0300
+@@ -1,6 +1,7 @@
+ // Сквозная проверка "склейки" прошивки: компилируется настоящий esp32_firmware.ino, на заглушках
+ // вызываются setup()/loop() с виртуальным временем, команды подаются через Serial.
+-// Проверяется: команды $2/$10/$11/$12/$13, телеметрия 100 Гц, пауза одометрии, аварийная остановка по тишине.
++// Проверяется: команды $2/$10/$11/$12/$13/$14/$15/$16/$17, телеметрия 100 Гц, пауза одометрии, аварийная остановка
++// по тишине, безударное переключение ПИ <-> LADRC.
+ #include "Arduino.h"
+ #include <stdio.h>
+ #include <string>
+@@ -9,6 +10,7 @@
+ #include <vector>
+ #include <stdlib.h>
+ #include "GyverOLED.h"
++#include "Preferences.h"
+ #define private public
+ #include "motor_controller.h"
+ #undef private
+@@ -19,6 +21,8 @@
+ extern bool telemetry_on;
+ extern float FF_GAIN_L, FF_DEADZONE_L;
+ extern float KP_L, KI_L, KD_L, KP_R, KI_R, KD_R;
++extern float ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF;
++extern int CTRL_MODE;
+ extern unsigned long control_next_us;
+ static long g_minWindow = 1L << 30;
+ static int g_chunks = 0;
+@@ -138,6 +142,92 @@
+   run(0.05);
+   check(controller.getTargetLeft() > 0.19f, "мусор и неизвестные типы игнорируются");
+ 
++  printf("9) $15/$16/$17 - LADRC: параметры, переключение режима, flash\n");
++  {
++    Serial.tx.clear();
++    char want[120];
++    snprintf(want, sizeof want, "$7;%d;%.3f;%.3f;%.4f;%.4f;%d;#", CTRL_MODE, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (int)ADRC_FF);
++    cmd("$17;#");
++    run(0.05);
++    check(Serial.tx.find(want) != std::string::npos, "ответ $7 с заводскими параметрами и режимом из config.h");
++    check(controller.getControlMode() == (CTRL_MODE == 1 ? ControlMode::kLadrc : ControlMode::kPi), "режим по умолчанию из config.h");
++    cmd("$15;0;0#");   // дальше проверки начинаются с ПИ
++    run(0.05);
++
++    cmd("$16;6;30;10;8;1;0#");   // ff = 1: только мёртвая зона
++    run(0.05);
++    Serial.tx.clear();
++    cmd("$13;#");
++    run(0.05);
++    check(Serial.tx.find("$7;0;6.000;30.000;10.0000;8.0000;1;#") != std::string::npos, "$16 принят, $13 тоже присылает $7");
++    check(controller.getAdrcWo() == 30.0f && controller.getAdrcB0Left() == 10.0f && controller.getAdrcFfMode() == 1, "параметры дошли до регулятора");
++    cmd("$16;6;500;0;8;0;0#");
++    run(0.05);
++    check(ADRC_WO == 100.0f && ADRC_B0_L == 0.5f && ADRC_FF == 0.0f, "wo и b0 ограничены, прямая подача выключена");
++    cmd("$16;nan;30;10;8;0;0#");
++    run(0.05);
++    check(ADRC_WC == 6.0f, "NaN отвергнут");
++    cmd("$16;5;25;9.82;7.65;2;0#");
++    run(0.05);
++    cmd("$11;0.5848;0.1073;0.9133;0.1114;0;#");   // в разделе 5 мёртвая зона FF была задрана до 0.9
++    run(0.05);
++
++    // Безударность: колёса стоят (энкодеры не крутятся), скважность растёт медленно (рампа ПИ);
++    // в момент переключения она не должна скачком меняться
++    cmd("$2;0;0;#");
++    run(0.05);
++    cmd("$2;0.1;0.1;#");
++    run(0.08);
++    const float uPi = controller.getOutputLeft();
++    cmd("$15;1;0#");
++    run(0.0101);   // один такт
++    const float uAdrc = controller.getOutputLeft();
++    printf("   скважность до/после переключения ПИ->LADRC: %.4f / %.4f\n", uPi, uAdrc);
++    check(controller.getControlMode() == ControlMode::kLadrc, "режим LADRC");
++    check(uPi > 0.1f && uPi < 0.9f && fabsf(uAdrc - uPi) < 0.03f, "ПИ -> LADRC без скачка скважности (вне насыщения)");
++    run(0.1);
++    check(controller.getOutputLeft() > uAdrc + 0.02f, "LADRC продолжает поднимать тягу, пока колесо стоит (оценка возмущения растёт)");
++    const float uA = controller.getOutputLeft();
++    cmd("$15;0;0#");
++    run(0.0101);
++    const float uP = controller.getOutputLeft();
++    printf("   скважность до/после переключения LADRC->ПИ: %.4f / %.4f\n", uA, uP);
++    check(controller.getControlMode() == ControlMode::kPi && uA < 0.95f && fabsf(uP - uA) < 0.03f, "LADRC -> ПИ без скачка скважности");
++
++    cmd("$2;0;0;#");
++    run(0.05);
++    cmd("$15;1;1#");
++    run(0.05);
++    Preferences pr;
++    pr.begin("Memory2", true);
++    check(pr.getInt("CtrlMode", -1) == 1, "режим сохранён во flash ($15 с save = 1)");
++    cmd("$16;5;25;9.82;7.65;2;1#");
++    run(0.05);
++    check(pr.getFloat("AdrcWo", -1) == 25.0f && pr.getFloat("AdrcB0R", -1) > 7.64f && pr.getFloat("AdrcFf", -1) == 2.0f, "параметры LADRC сохранены во flash");
++    pr.end();
++    cmd("$2;0.1;0.1;#");
++    run(0.3);
++    check(controller._pwm.pins[2] > 100 && controller._pwm.pins[3] == 0, "в режиме LADRC правый мотор тянет вперёд");
++    cmd("$2;0;0;#");
++    run(0.05);
++    check(controller._pwm.pins[2] == 0 && controller.getDisturbanceLeft() == 0.0f, "остановка: мотор выключен, оценка возмущения сброшена");
++    cmd("$15;0;1#");   // вернуть ПИ для остальных проверок
++    run(0.05);
++  }
++
++  printf("9b) $18 - окно оценки скорости (отладка)\n");
++  Serial.tx.clear();
++  cmd("$18;#");
++  run(0.05);
++  check(Serial.tx.find("$8;2;1;#") != std::string::npos, "запрос: окно из config.h (2 фронта, целые метки)");
++  cmd("$18;4;0;#");
++  run(0.05);
++  cmd("$18;99;#");
++  run(0.05);
++  check(Serial.tx.find("$8;4;0;#") != std::string::npos && Serial.tx.find("$8;8;0;#") != std::string::npos, "окно и выравнивание меняются, окно ограничено 8");
++  cmd("$18;2;1;#");
++  run(0.05);
++
+   printf("7) дисплей: кадр уходит по кускам только в свободном окне между тактами\n");
+   g_onOledChunk = onChunk;
+   cmd("$2;0;0;#");   // обновить таймер связи
+diff -ruN v23/tools/mtcal.py v24/tools/mtcal.py
+--- v23/tools/mtcal.py	2026-10-28 20:52:30.510566586 +0300
++++ v24/tools/mtcal.py	2026-10-29 22:17:03.950140056 +0300
+@@ -397,6 +397,11 @@
+     cmd_pi = "$4;%.3f;%.3f;0;%.3f;%.3f;0;#" % (pi["L"][0], pi["L"][1], pi["R"][0], pi["R"][1])
+     ui.panel(cmd_ff + "\n" + cmd_pi, "Команды для платы (по порядку: feedforward, затем ПИ; оба с сохранением во flash)", "green")
+     ui.say("Если ПИ окажется колебательным - пересчитайте с --lam 1.0 (или 1.5) либо с общей --lambda-s 0.3: python3 mtcal.py fit cal_log.csv --lam 1.0", "dim")
++    # LADRC по той же калибровке (b0 = K/Tm); подробнее и запись в плату - adrc.py
++    import adrc
++    p, notes = adrc.recommend(st, sp, wheel_r, lambda_s=lambda_s or 0.2)
++    ui.say("LADRC по этой калибровке (wc = 1/lambda, wo = 5*wc, полный FF): %s" % adrc.command(p, True), "dim")
++    ui.say("Подробно и с проверками: python3 adrc.py fit <лог> [--lambda-s 0.2]", "dim")
+     return cmd_ff, cmd_pi
+ 
+ 
+diff -ruN v23/tools/noisetest.py v24/tools/noisetest.py
+--- v23/tools/noisetest.py	1970-01-01 03:00:00.000000000 +0300
++++ v24/tools/noisetest.py	2026-10-29 22:17:03.951489542 +0300
+@@ -0,0 +1,394 @@
++#!/usr/bin/env python3
++# Copyright (c) 2026 Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
++# SPDX-License-Identifier: MIT
++"""
++Откуда шум скорости: квадратура энкодера, механика или метки времени.
++
++    python3 noisetest.py run --port /dev/ttyUSB0          # КОЛЁСА В ВОЗДУХЕ, ~1.5 мин
++    python3 noisetest.py run --sim                        # проверка скрипта на модели, без железа
++    python3 noisetest.py fit noise_log.csv                # пересчитать анализ по сохранённому логу
++
++Опыт (разомкнутый контур, регулятор не маскирует шум): для каждого режима оценки скорости
++(--modes, команда $18;n;align#: n - минимум фронтов в окне, align 1 - окно из целых меток,
++0 - прежняя оценка) колёса крутятся на нескольких постоянных скважностях (--duties, команда $10),
++скорость пишется по телеметрии $3.
++
++Главная метрика - "иглы": 95-й процентиль отклонения от скользящей медианы, выраженный в фронтах
++энкодера за такт. Ошибка положения фронтов (неравномерная квадратура) даёт иглы постоянной
++величины в фронтах на любой скорости; дрожание меток времени - постоянной в микросекундах.
++  * иглы ~0.4-0.6 фронта при align 0 и в разы меньше при align 1 -> квадратура, исправлено;
++  * иглы не уменьшились -> не квадратура: смотрите, постоянны ли они в мкс (метки времени)
++    или в спектре есть пик на частоте оборота колеса (механика).
++
++Нужна прошивка 2.4.0 с командой $18;n;align# (без неё опыт идёт только с оценкой из config.h).
++Нужны numpy, pyserial (для порта), matplotlib (для графика).
++"""
++import argparse
++import math
++import re
++import sys
++
++import numpy as np
++
++import ui
++from mtcal import SerialLink, SimLink, Telemetry, TWO_PI
++
++SETTLE = 1.0     # с после смены скважности до начала анализа (разгон)
++EDGES_PER_REV = 1080
++FS = 100.0       # частота телеметрии, Гц
++
++
++# ----------------------------------------------------------------------------------------------
++# Модель платы для проверки скрипта: шум квадратуры ~ 1/окно и исчезает при окне 4,
++# плюс механическое биение на частоте оборота колеса
++# ----------------------------------------------------------------------------------------------
++class NoiseSim(SimLink):
++    """Модель платы для проверки скрипта: без выравнивания (align 0) - иглы ~0.5 фронта за такт, как на
++    роботе; с выравниванием (align 1) - только мелкий шум и механическое биение на частоте оборота."""
++
++    def __init__(self, wheel_r, seed=1, quad=0.5, mech=0.003):
++        super().__init__(wheel_r, seed)
++        self.window, self.align = 2, 1
++        self.quad, self.mech = quad, mech
++        self.phase = [0.0, 0.0]
++
++    def send(self, text):
++        super().send(text)
++        for m in re.finditer(r"\$18;([^#]*)#", text):
++            a = [x for x in m.group(1).split(";") if x]
++            if a:
++                self.window = max(1, min(8, int(round(float(a[0])))))
++            if len(a) > 1:
++                self.align = 1 if float(a[1]) >= 0.5 else 0
++            self.out.append("$8;%d;%d;#" % (self.window, self.align))
++
++    def sleep(self, dt):
++        end = self.t + dt
++        while self.t < end - 1e-12:
++            self._step(0.001)
++            for i in range(2):
++                self.phase[i] += self.w[i] * 0.001 * TWO_PI
++            if self.telemetry and self.t >= self.next_tel:
++                self.next_tel += 0.01
++                v = []
++                for i in range(2):
++                    w = self.meas[i]
++                    ept = max(abs(w) * EDGES_PER_REV * 0.01, 1.0)
++                    q = 0.0 if self.align else self.quad / ept * self.rng.choice([-1, 0, 0, 0, 1])
++                    w = w * (1 + q + self.mech * math.sin(self.phase[i])) + self.rng.normal(0, 0.001)
++                    v.append(w * TWO_PI * self.wheel_r)
++                t_us = int(self.t0_us + self.t * 1e6) % 2 ** 32
++                self.out.append("$3;%d;0.0000;%.4f;%.3f;0.0000;%.4f;%.3f;#" % (t_us, v[0], self.duty[0], v[1], self.duty[1]))
++
++
++# ----------------------------------------------------------------------------------------------
++# Опыт
++# ----------------------------------------------------------------------------------------------
++def run(link, wheel_r, duties, windows, hold):
++    tel = Telemetry(wheel_r)
++    log = []                     # (режим "n:align", скважность, t, wL, wR, uL, uR)
++    st = {"win": 0, "duty": 0.0, "rec": False}
++    replies = []
++
++    def pump():
++        for ln in link.poll():
++            s = tel.parse(ln)
++            if s and st["rec"]:
++                log.append((st["win"], st["duty"]) + s)
++            elif ln.startswith("$8;"):
++                replies.append(ln)
++
++    def idle(dur):
++        end = link.now() + dur
++        while link.now() < end:
++            link.sleep(0.005)
++            pump()
++
++    def spin(d, dur, rec):
++        st["rec"] = rec
++        end = link.now() + dur
++        last = -1e9
++        while link.now() < end:
++            if link.now() - last >= 0.1:            # чаще раза в секунду: иначе аварийная остановка
++                link.send("$10;%.4f;%.4f;#\r\n" % (d, d))
++                last = link.now()
++            link.sleep(0.005)
++            pump()
++        st["rec"] = False
++
++    try:
++        got = False
++        for _ in range(10):
++            link.send("$12;1;#\r\n")
++            st["rec"] = True
++            idle(0.4)
++            st["rec"] = False
++            if log:
++                got = True
++                break
++        if not got:
++            raise SystemExit("Нет телеметрии $3: проверьте порт и прошивку (python3 console.py --port ...)")
++        log.clear()
++        for w in windows:
++            n, al = w
++            replies.clear()
++            link.send("$18;%d;%d;#\r\n" % (n, al))
++            idle(0.4)
++            label = "%d:%d" % (n, al)
++            if not replies:
++                ui.warn("Плата не ответила на $18 (прошивка без отладочной команды): режим не меняется, опыт с оценкой из config.h")
++                windows = [None]
++                w = None
++                label = "конф."
++            elif replies[-1] != "$8;%d;%d;#" % (n, al):
++                ui.warn("Плата ответила %s, ожидалось $8;%d;%d;# (старая прошивка без выравнивания?)" % (replies[-1], n, al))
++            st["win"] = label
++            ui.say("Режим %s (минимум фронтов : целые метки): скважности %s" % (label, ", ".join("%.2f" % d for d in duties)), "bold")
++            for d in duties:
++                st["duty"] = d
++                spin(d, SETTLE, False)
++                spin(d, hold, True)
++            spin(0.0, 1.0, False)                  # остановка между режимами
++            if w is None:
++                break
++    finally:
++        for _ in range(3):
++            link.send("$10;0;0;#\r\n")
++            link.sleep(0.05)
++        link.send("$2;0;0;#\r\n")
++        link.sleep(0.05)
++        link.send("$18;2;1;#\r\n")
++        link.sleep(0.05)
++        link.send("$12;0;#\r\n")
++    return log
++
++
++# ----------------------------------------------------------------------------------------------
++# Анализ
++# ----------------------------------------------------------------------------------------------
++def _segment(log, w, d, col):
++    a = np.array([[r[2], r[col]] for r in log if r[0] == w and abs(r[1] - d) < 1e-6])
++    return (a[:, 0], a[:, 1]) if len(a) else (np.array([]), np.array([]))
++
++
++def spectrum(t, x):
++    """Равномерная сетка 100 Гц, линейный тренд убран. -> (f, амплитуда)"""
++    if len(t) < 64:
++        return np.array([]), np.array([])
++    tu = np.arange(t[0], t[-1], 1.0 / FS)
++    xu = np.interp(tu, t, x)
++    xu = xu - np.polyval(np.polyfit(tu - tu[0], xu, 1), tu - tu[0])
++    win = np.hanning(len(xu))
++    amp = np.abs(np.fft.rfft(xu * win)) * 2 / win.sum()
++    f = np.fft.rfftfreq(len(xu), 1.0 / FS)
++    return f, amp
++
++
++def _medfilt(x, k=9):
++    p = k // 2
++    xp = np.pad(x, p, mode="edge")
++    return np.array([np.median(xp[i:i + k]) for i in range(len(x))])
++
++
++def analyze(log):
++    windows = sorted({r[0] for r in log})
++    duties = sorted({r[1] for r in log})
++    rows = []
++    for w in windows:
++        for d in duties:
++            for name, col in (("L", 3), ("R", 4)):
++                t, x = _segment(log, w, d, col)
++                if len(x) < 50:
++                    continue
++                mean = float(np.mean(x))
++                if abs(mean) < 0.02:
++                    rows.append(dict(win=w, duty=d, wheel=name, mean=mean, std=None))
++                    continue
++                det = x - np.polyval(np.polyfit(t - t[0], x, 1), t - t[0])
++                f, amp = spectrum(t, x)
++                band = f > 0.5
++                fp = float(f[band][np.argmax(amp[band])]) if band.any() else float("nan")
++                ap = float(amp[band].max()) if band.any() else float("nan")
++                dev = np.abs(x - _medfilt(x)) / abs(mean)
++                p95 = float(np.percentile(dev, 95))
++                ept = abs(mean) * EDGES_PER_REV * 0.01          # фронтов за такт 10 мс
++                rows.append(dict(win=w, duty=d, wheel=name, mean=mean, std=float(np.std(det)),
++                                 rel=float(np.std(det) / abs(mean) * 100), p2p=float(np.ptp(det)),
++                                 fpeak=fp, apeak=ap, fwheel=abs(mean), dt_jit=float(np.std(np.diff(t)) * 1e3),
++                                 spk_pct=p95 * 100, spk_edges=p95 * ept, spk_us=p95 * 10000))
++    return windows, duties, rows
++
++
++def _find(rows, w, d, wh):
++    return next((r for r in rows if r["win"] == w and r["duty"] == d and r["wheel"] == wh and r.get("std") is not None), None)
++
++
++def report(windows, duties, rows):
++    tab = []
++    for r in rows:
++        if r.get("std") is None:
++            tab.append([str(r["win"]), "%.2f" % r["duty"], r["wheel"], "%.3f" % r["mean"], "колесо стоит", "", "", "", "", ""])
++            continue
++        tab.append([str(r["win"]), "%.2f" % r["duty"], r["wheel"], "%.3f" % r["mean"], "%.4f" % r["std"],
++                    ui.good_bad(r["rel"], 2.0, "%.2f"), "%.4f" % r["p2p"], "%.2f" % r["spk_pct"],
++                    ui.good_bad(r["spk_edges"], 0.2, "%.2f"), "%.0f" % r["spk_us"]])
++    ui.table("Рябь скорости при постоянной скважности (разомкнутый контур)",
++             [("режим", "center"), ("скважн.", "right"), ("колесо", "center"), ("скорость, об/с", "right"),
++              ("СКО, об/с", "right"), ("СКО, %", "right"), ("размах, об/с", "right"),
++              ("иглы, %", "right"), ("иглы, фронтов", "right"), ("иглы, мкс", "right")],
++             tab, caption="Режим n:a - минимум фронтов : целые метки (1 - да). Иглы - 95-й процентиль отклонения от "
++                          "скользящей медианы. Постоянны в фронтах - квадратура, в мкс - метки времени")
++
++    if len(windows) < 2:
++        ui.warn("Режим был один: сравнить нельзя. Нужна прошивка с $18;n;align#.")
++        return
++    ref = next((w for w in windows if str(w).endswith(":0")), windows[0])
++    best = next((w for w in windows if str(w).endswith(":1")), windows[-1])
++    verdict = []
++    vrows = []
++    for d in duties:
++        for wh in ("L", "R"):
++            a, b = _find(rows, ref, d, wh), _find(rows, best, d, wh)
++            if not a or not b or a["std"] <= 0:
++                continue
++            ratio = b["spk_edges"] / max(a["spk_edges"], 1e-9)
++            near_rev = abs(b["fpeak"] / b["fwheel"] - round(b["fpeak"] / b["fwheel"])) < 0.15 and b["fpeak"] > 0.5 \
++                and round(b["fpeak"] / b["fwheel"]) in (1, 2, 3, 4)
++            if ratio < 0.5:
++                why = ("квадратура: исправлено", "bold green")
++            elif near_rev:
++                why = ("механика (оборот колеса)", "bold yellow")
++            else:
++                why = ("не окно: метки времени / вращение", "bold yellow")
++            verdict.append(why[0])
++            vrows.append(["%.2f" % d, wh, "%.2f" % a["spk_edges"], "%.2f" % b["spk_edges"],
++                          "%.4f / %.4f" % (a["std"], b["std"]), "%.2f" % ratio, why])
++    ui.table("Вывод: режим %s против %s" % (best, ref),
++             [("скважн.", "right"), ("колесо", "center"), ("иглы %s, фронтов" % ref, "right"),
++              ("иглы %s, фронтов" % best, "right"), ("СКО, об/с", "right"), ("отношение игл", "right"),
++              ("главная причина", "left")], vrows,
++             caption="Отношение < 0.5: иглы ушли с окном из целых меток - это была квадратура")
++    if not verdict:
++        return
++    q = sum(v.startswith("квадратура") for v in verdict) / len(verdict)
++    if q >= 0.5:
++        ui.ok("Иглы были от неравномерности фронтов квадратуры, и окно из целых меток их убирает.")
++    else:
++        ui.warn("Окно рябь почти не убирает: она механическая или от меток времени. Фильтр её только задержит; "
++                "для LADRC держать wo ниже, механику проверить (биение колеса, люфт, крепление диска энкодера).")
++
++
++def save_csv(log, path):
++    with open(path, "w") as f:
++        f.write("window,duty,t_s,wL_rev_s,wR_rev_s,uL,uR\n")
++        for r in log:
++            f.write("%s,%.4f,%.6f,%.5f,%.5f,%.4f,%.4f\n" % r)
++
++
++def load_csv(path):
++    log = []
++    with open(path) as f:
++        next(f)
++        for ln in f:
++            p = ln.strip().split(",")
++            log.append((p[0], float(p[1])) + tuple(float(x) for x in p[2:7]))
++    return log
++
++
++def plot(log, windows, duties, path, show):
++    try:
++        import matplotlib
++        if not show:
++            matplotlib.use("Agg")
++        import matplotlib.pyplot as plt
++    except ImportError:
++        ui.warn("Графики не построены: pip install matplotlib")
++        return
++    fig, axs = plt.subplots(len(duties), 4, figsize=(18, 3.2 * len(duties)), squeeze=False)
++    colors = ["#1f77b4", "#e07b00", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
++    for i, d in enumerate(duties):
++        for j, (wh, col) in enumerate((("L", 3), ("R", 4))):
++            at, af = axs[i, j], axs[i, j + 2]
++            for k, w in enumerate(windows):
++                t, x = _segment(log, w, d, col)
++                if len(x) < 50:
++                    continue
++                c = colors[k % len(colors)]
++                at.plot(t - t[0], x, color=c, lw=0.9, label="режим %s" % w)
++                f, amp = spectrum(t, x)
++                if len(f):
++                    af.semilogy(f[1:], amp[1:] + 1e-6, color=c, lw=0.9, label="режим %s" % w)
++            at.set_title("%s, скважность %.2f: скорость" % (wh, d), fontsize=9)
++            at.set_xlabel("с")
++            at.set_ylabel("об/с")
++            at.grid(alpha=0.3)
++            af.set_title("%s, скважность %.2f: спектр ряби" % (wh, d), fontsize=9)
++            af.set_xlabel("Гц")
++            af.set_ylabel("амплитуда, об/с")
++            af.grid(alpha=0.3, which="both")
++    axs[0, 0].legend(fontsize=8)
++    fig.tight_layout()
++    fig.savefig(path, dpi=110)
++    ui.ok("График сохранён: %s" % path)
++    if show:
++        plt.show()
++
++
++def main():
++    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    sub = ap.add_subparsers(dest="cmd", required=True)
++    r = sub.add_parser("run")
++    r.add_argument("--port", default="/dev/ttyUSB0")
++    r.add_argument("--baud", type=int, default=115200)
++    r.add_argument("--boot-wait", type=float, default=5.0)
++    r.add_argument("--sim", action="store_true", help="модель платы вместо реальной")
++    r.add_argument("--yes", action="store_true", help="не спрашивать подтверждение")
++    r.add_argument("--duties", default="0.14,0.2,0.3,0.5",
++                   help="скважности через запятую (в воздухе по калибровке: левое ~0.3/0.8/1.6/3.3 об/с, правое ~0.15/0.5/1.0/2.1)")
++    r.add_argument("--modes", default="2:0,2:1",
++                   help="режимы оценки скорости 'n:align' через запятую (команда $18): 2:0 - прежняя, 2:1 - целые метки")
++    r.add_argument("--hold", type=float, default=6.0,
++                   help="запись на каждой скважности, с (для спектра нужно хотя бы 2-3 оборота колеса)")
++    r.add_argument("--out", default="noise_log.csv")
++    f = sub.add_parser("fit")
++    f.add_argument("csv")
++    for p in (r, f):
++        p.add_argument("--radius", type=float, default=0.065 / 2)
++        p.add_argument("--plot", default="noise_plot.png")
++        p.add_argument("--show", action="store_true")
++        p.add_argument("--no-plot", action="store_true")
++    a = ap.parse_args()
++
++    if a.cmd == "fit":
++        log = load_csv(a.csv)
++    else:
++        duties = [float(x) for x in a.duties.split(",")]
++        windows = [tuple(int(v) for v in m.split(":")) for m in a.modes.split(",")]
++        if any(d > 1.0 or d < 0 for d in duties):
++            sys.exit("Скважности от 0 до 1")
++        total = len(windows) * (len(duties) * (SETTLE + a.hold) + 1.0)
++        if a.sim:
++            link = NoiseSim(a.radius)
++        else:
++            link = SerialLink(a.port, a.baud, a.boot_wait)
++            if not a.yes:
++                ui.warn("ВНИМАНИЕ: моторы будут крутиться до скважности %.2f около %.0f с. КОЛЁСА ДОЛЖНЫ БЫТЬ В ВОЗДУХЕ."
++                        % (max(duties), total))
++                if input("Колёса подняты? Введите 'да': ").strip().lower() not in ("да", "yes", "y"):
++                    sys.exit("Отменено.")
++        try:
++            log = run(link, a.radius, duties, windows, a.hold)
++        except KeyboardInterrupt:
++            for _ in range(3):
++                link.send("$10;0;0;#\r\n")
++            raise
++        save_csv(log, a.out)
++        ui.ok("Лог сохранён: %s (%d отсчётов)" % (a.out, len(log)))
++    windows, duties, rows = analyze(log)
++    report(windows, duties, rows)
++    if not a.no_plot:
++        plot(log, windows, duties, a.plot, a.show)
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN v23/tools/plots.py v24/tools/plots.py
+--- v23/tools/plots.py	2026-10-28 20:52:30.510401518 +0300
++++ v24/tools/plots.py	2026-10-29 22:17:03.949888939 +0300
+@@ -122,3 +122,38 @@
+     ax.grid(alpha=0.3)
+     ax.legend(fontsize=8, loc="lower right")
+     _finish(plt, fig, path, show)
++
++
++def plot_compare(logs, names, levels, wheel_r, base, path="step_compare.png", show=False):
++    """Наложение ступенек нескольких логов (например, ПИ и LADRC): скорости L/R и набег курса"""
++    plt = _plt(show)
++    if plt is None:
++        return
++    two_pi = 2.0 * np.pi
++    styles = ["-", "--", ":", "-."]
++    fig, axs = plt.subplots(2, len(levels), figsize=(5.2 * len(levels), 7), squeeze=False,
++                            gridspec_kw={"height_ratios": [2, 1]})
++    for j, lev in enumerate(levels):
++        ax, ay = axs[0, j], axs[1, j]
++        ax.axhline(lev, color="0.6", lw=0.8, ls=":")
++        for k, (log, name) in enumerate(zip(logs, names)):
++            a = np.array([[r[2], r[3], r[4]] for r in log if r[0] == lev and r[1] == "step"])
++            if len(a) < 2:
++                continue
++            t = a[:, 0] - a[0, 0]
++            ls = styles[k % len(styles)]
++            ax.plot(t, a[:, 1], color=C_L, lw=1.3, ls=ls, label="%s L" % name)
++            ax.plot(t, a[:, 2], color=C_R, lw=1.3, ls=ls, label="%s R" % name)
++            dt = np.diff(a[:, 0], prepend=a[0, 0])
++            yaw = np.cumsum((a[:, 2] - a[:, 1]) * two_pi * wheel_r / base * dt) * 180 / np.pi
++            ay.plot(t, yaw, color="0.2", lw=1.3, ls=ls, label=name)
++        ax.set_title("уставка %.2f об/с" % lev, fontsize=10)
++        ax.set_ylabel("скорость, об/с")
++        ax.grid(alpha=0.3)
++        ay.axhline(0, color="0.6", lw=0.8)
++        ay.set_ylabel("набег курса, °")
++        ay.set_xlabel("время от ступеньки, с")
++        ay.grid(alpha=0.3)
++    axs[0, 0].legend(fontsize=8, loc="lower right")
++    axs[1, 0].legend(fontsize=8)
++    _finish(plt, fig, path, show)
+diff -ruN v23/tools/steptest.py v24/tools/steptest.py
+--- v23/tools/steptest.py	2026-10-28 20:52:30.510636509 +0300
++++ v24/tools/steptest.py	2026-10-29 22:17:03.950369741 +0300
+@@ -9,10 +9,16 @@
+     python3 steptest.py run --sim                          # проверка скрипта на модели, без железа
+     python3 steptest.py fit step_log.csv                   # пересчитать метрики по сохранённому логу
+ 
++Сравнение ПИ и LADRC (настройки только на время опыта, во flash не пишутся):
++    python3 steptest.py run --port /dev/ttyUSB0 --levels 0.2,0.5,1.2 --mode pi        # -> step_log_pi.csv
++    python3 steptest.py run --port /dev/ttyUSB0 --levels 0.2,0.5,1.2 --mode ladrc --adrc 5,25,9.82,7.65,2
++    python3 steptest.py compare step_log_pi.csv step_log_ladrc.csv                     # таблица и график
++
+ Для каждой уставки (об/с, оба колеса вперёд): пауза 1.5 с -> ступенька на 2.5 с -> пауза 1.5 с.
+ Уставка отправляется командой $2 (м/с), скорости берутся из телеметрии $3.
+ Печатаются: время выхода на 90%, перерегулирование, время установления +-10%, ошибка в
+-установившемся режиме и рябь (СКО / уставка) за последнюю секунду ступеньки.
++установившемся режиме и рябь (СКО / уставка) за последнюю секунду ступеньки, а также синхронность
++колёс: наибольшая разность скоростей |wL - wR| и набег курса из-за неё (база --base).
+ 
+ Нужен numpy (и pyserial для реального порта). Использует классы из mtcal.py (лежит рядом).
+ """
+@@ -22,6 +28,7 @@
+ 
+ import numpy as np
+ 
++import adrc
+ import ui
+ from mtcal import SerialLink, SimLink, Telemetry, TWO_PI
+ 
+@@ -35,7 +42,7 @@
+ 
+ 
+ class ClosedSim(SimLink):
+-    """Модель платы с замкнутым контуром (feedforward + ПИ, 100 Гц) для проверки самого скрипта."""
++    """Модель платы с замкнутым контуром (feedforward + ПИ или LADRC, 100 Гц) для проверки самого скрипта."""
+ 
+     def __init__(self, wheel_r, seed=1):
+         super().__init__(wheel_r, seed)
+@@ -44,6 +51,11 @@
+         self.kp, self.ki = 1.0, 6.0
+         self.dz, self.gain = 0.35, 0.6
+         self.next_ctl = 0.0
++        # LADRC: b0 модели SimLink = Kv*2*pi*R/Tm ~ 16 (м/с^2) на 1.0
++        self.mode = 0
++        self.adrc = dict(wc=5.0, wo=25.0, b0L=16.0, b0R=16.0, ff=2)
++        self.eso = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]   # z1, z2, u без прямой подачи
++        self.prev_sign = [0, 0]
+ 
+     def send(self, text):
+         for m in __import__("re").finditer(r"\$(\d+);([^#]*)#", text):
+@@ -54,6 +66,36 @@
+             elif typ == 12:
+                 self.telemetry = args[0] >= 0.5
+                 self.next_tel = self.t
++            elif typ == 15 and args:
++                self.mode = 1 if args[0] >= 0.5 else 0
++            elif typ == 16 and len(args) >= 4:
++                self.adrc = dict(wc=args[0], wo=args[1], b0L=args[2], b0R=args[3], ff=int(args[4]) if len(args) > 4 else 0)
++            elif typ == 13:
++                self.out += ["$4;%.5f;%.5f;%.5f;%.5f;#" % (self.gain, self.dz, self.gain, self.dz), "$6;0.00000;#",
++                             "$7;%d;%.3f;%.3f;%.4f;%.4f;%d;#" % (self.mode, self.adrc["wc"], self.adrc["wo"],
++                                                                 self.adrc["b0L"], self.adrc["b0R"], self.adrc["ff"])]
++            elif typ == 5:
++                self.out.append("$2;%.5f;%.5f;0.00000;%.5f;%.5f;0.00000;#" % (self.kp, self.ki, self.kp, self.ki))
++
++    def _ladrc(self, i, r, v, h=0.01):
++        p = self.adrc
++        sign = (r > 0.002) - (r < -0.002)
++        z = self.eso[i]
++        if sign != self.prev_sign[i]:
++            z[:] = [v, 0.0, 0.0]
++        self.prev_sign[i] = sign
++        if not sign:
++            z[:] = [v, 0.0, 0.0]
++            return 0.0
++        b0 = p["b0L"] if i == 0 else p["b0R"]
++        wc, wo = p["wc"], p["wo"]
++        ff = 0.0 if p["ff"] == 0 else sign * self.dz if p["ff"] == 1 else sign * (self.dz + self.gain * abs(r))
++        e = v - z[0]
++        z[0] += h * (z[1] + b0 * z[2] + 2 * wo * e)
++        z[1] += h * wo * wo * e
++        u = max(-1.0, min(1.0, ff + (wc * (r - z[0]) - z[1]) / b0))
++        z[2] = u - ff
++        return u
+ 
+     def _step(self, dt):
+         super()._step(dt)
+@@ -65,6 +107,9 @@
+         for i in range(2):
+             r = self.ref[i]
+             v = self.meas[i] * TWO_PI * self.wheel_r
++            if self.mode == 1:
++                self.duty[i] = self._ladrc(i, r, v)
++                continue
+             if abs(r) < 0.002:
+                 self.integ[i] = 0.0
+                 self.duty[i] = 0.0
+@@ -75,7 +120,8 @@
+             self.duty[i] = max(-1.0, min(1.0, ff + self.kp * e + self.integ[i]))
+ 
+ 
+-def run_steps(link, wheel_r, levels):
++def run_steps(link, wheel_r, levels, setup=()):
++    """setup - команды настройки перед опытом (по одной, с паузами), например $16 и $15 без сохранения"""
+     tel = Telemetry(wheel_r)
+     log = []   # (уровень об/с, фаза, t, wL, wR, uL, uR)
+     state = {"level": 0.0, "phase": "idle", "last": -1e9}
+@@ -87,7 +133,7 @@
+         for ln in link.poll():
+             s = tel.parse(ln)
+             if not s and ln:
+-                if ln.startswith(("$4;", "$2;", "$6;")):
++                if ln.startswith(("$4;", "$2;", "$6;", "$7;")):
+                     params.append(ln)        # ответы на $13 / $5: их не вытесняют строки одометрии $1
+                 else:
+                     other[:] = (other + [ln])[-5:]
+@@ -115,6 +161,8 @@
+         # Порядок и паузы такие же, как в ручной проверке, которая работала: команды по одной, с паузами
+         other.clear()
+         params.clear()
++        for c in setup:
++            link.send(c + "\r\n"); idle(0.4)
+         link.send("$13;#\r\n"); idle(0.4)
+         link.send("$5;#\r\n"); idle(0.4)
+         for _ in range(10):                      # включаем телеметрию, при неудаче повторяем
+@@ -126,9 +174,14 @@
+             if other:
+                 msg += "Плата присылает другое (старая прошивка или не та скорость порта):\n  " + "\n  ".join(other) + "\n"
+             else:
+-                msg += "От платы ничего не пришло: проверьте порт (не занят ли ROS-узлом) и прошивку 2.3.0.\n"
++                msg += "От платы ничего не пришло: проверьте порт (не занят ли ROS-узлом) и прошивку 2.4.0.\n"
+             raise SystemExit(msg)
+         ui.panel("\n".join(params) if params else "(плата не ответила на $13 и $5)", "Параметры в плате (ответы на $13 и $5)", "blue")
++        p7 = next((adrc.parse7(ln) for ln in params if adrc.parse7(ln)), None)
++        if p7:
++            ui.say(adrc.describe(p7), "bold")
++        elif setup:
++            ui.warn("Плата не прислала $7: прошивка без LADRC, команды --mode/--adrc не сработают")
+         for lev in levels:
+             state["level"] = lev
+             state["phase"] = "pre"
+@@ -175,6 +228,33 @@
+     return rows
+ 
+ 
++def analyze_sync(log, levels, wheel_r, base):
++    """Синхронность колёс на ступеньке: max|wL - wR| (об/с) и набег курса (градусы) за фазу step"""
++    out = []
++    for lev in levels:
++        seg = np.array([[r[2], r[3], r[4]] for r in log if r[0] == lev and r[1] == "step"])
++        if len(seg) < 50:
++            continue
++        t = seg[:, 0]
++        d = seg[:, 2] - seg[:, 1]                                 # wR - wL, об/с: > 0 - поворот влево
++        dt = np.diff(t, prepend=t[0])
++        yaw = np.cumsum(d * TWO_PI * wheel_r / base * dt) * 180.0 / math.pi
++        first = t <= t[0] + 1.0                                   # первая секунда - переходный процесс
++        out.append(dict(level=lev, max_dw=float(np.abs(d).max()), max_dw_tr=float(np.abs(d[first]).max()),
++                        yaw_peak=float(yaw[np.argmax(np.abs(yaw))]), yaw_1s=float(yaw[first][-1]), yaw_end=float(yaw[-1])))
++    return out
++
++
++def report_sync(sync, title="Синхронность колёс (ступенька, обе уставки одинаковые)"):
++    if not sync:
++        return
++    rows = [["%.2f" % r["level"], "%.3f" % r["max_dw_tr"], "%.3f" % r["max_dw"], "%+.2f" % r["yaw_1s"], "%+.2f" % r["yaw_end"]]
++            for r in sync]
++    ui.table(title, [("уставка", "right"), ("max|wL-wR| 1 с", "right"), ("max|wL-wR|", "right"),
++                     ("курс за 1 с, °", "right"), ("курс за ступеньку, °", "right")], rows,
++             caption="Курс > 0 - робот уводит влево (правое колесо быстрее). Переходный процесс - первая секунда")
++
++
+ def _ms(x, limit=None):
+     if x is None:
+         return ("--", "bold red")
+@@ -182,7 +262,12 @@
+     return (txt, ("green" if x <= limit else "bold red")) if limit else txt
+ 
+ 
+-def report(rows):
++def report(rows, mode=None):
++    """mode: 'pi', 'ladrc' или None - от него зависят подсказки"""
++    hint_slow = {"pi": "ПИ слабый или feedforward занижен",
++                 "ladrc": "увеличьте wc (и wo следом), проверьте прямую подачу ff и b0 (сильно завышенный b0 - медленно)"}
++    hint_over = {"pi": "ПИ слишком агрессивный или feedforward завышен (пересчитайте `mtcal.py fit --lam 1.0` или --lambda-s 0.2)",
++                 "ladrc": "уменьшите wo или wc; заниженный b0 тоже раскачивает (лучше завысить)"}
+     bad = []
+     table_rows = []
+     for r in rows:
+@@ -199,12 +284,14 @@
+             bad.append("%s: уставка не достигнута (не хватает ШИМ или мощности? ШИМ в конце %.2f)" % (tag, r["u_end"]))
+             continue
+         if r["t90"] > LIM_T90:
+-            bad.append("%s: медленный выход (t90 %.0f мс): ПИ слабый или feedforward занижен" % (tag, r["t90"] * 1000))
++            bad.append("%s: медленный выход (t90 %.0f мс): %s" % (tag, r["t90"] * 1000,
++                       hint_slow.get(mode, hint_slow["pi"] + "; у LADRC - " + hint_slow["ladrc"])))
+         if r["over"] > LIM_OVER:
+             if r["level"] <= 0.1:
+                 bad.append("%s: заброс %.0f%% при трогании: трение покоя (колесо трогается при бо́льшей скважности, чем dz); для малых скоростей это ожидаемо, можно поднять dz в $11 на 0.02-0.04" % (tag, r["over"]))
+             else:
+-                bad.append("%s: перерегулирование %.0f%%: ПИ слишком агрессивный или feedforward завышен (пересчитайте `mtcal.py fit --lam 1.0` или --lambda-s 0.2)" % (tag, r["over"]))
++                bad.append("%s: перерегулирование %.0f%%: %s" % (tag, r["over"],
++                           hint_over.get(mode, hint_over["pi"] + "; у LADRC - " + hint_over["ladrc"])))
+         if abs(r["err"]) > LIM_ERR:
+             bad.append("%s: ошибка в установившемся режиме %.1f%%: интеграл не успел или упёрся в ограничение" % (tag, r["err"]))
+         if r["ripple"] > LIM_RIPPLE:
+@@ -242,6 +329,43 @@
+     return log
+ 
+ 
++def compare(paths, names, wheel_r, base):
++    """Сравнение нескольких логов (например, ПИ и LADRC): метрики рядом и синхронность"""
++    logs = [load_csv(pth) for pth in paths]
++    levels = sorted(set.intersection(*[{r[0] for r in lg if r[0] > 0} for lg in logs]))
++    if not levels:
++        sys.exit("В логах нет общих уставок")
++    res = [(analyze(lg, levels), analyze_sync(lg, levels, wheel_r, base)) for lg in logs]
++    cols = [("уставка", "right"), ("колесо", "center")]
++    for n in names:
++        cols += [("%s t90" % n, "right"), ("%s перерег.%%" % n, "right"), ("%s уст.±10%%" % n, "right"), ("%s рябь%%" % n, "right")]
++    rows = []
++    for lev in levels:
++        for wh in ("L", "R"):
++            row = ["%.2f" % lev, wh]
++            for rr, _ in res:
++                r = next((x for x in rr if x["level"] == lev and x["wheel"] == wh), None)
++                if r is None:
++                    row += ["--"] * 4
++                    continue
++                row += [_ms(r["t90"], LIM_T90), ui.good_bad(r["over"], LIM_OVER, "%.1f"), _ms(r["settle"]),
++                        ui.good_bad(r["ripple"], LIM_RIPPLE, "%.1f")]
++            rows.append(row)
++    ui.table("Сравнение отклика (время в мс)", cols, rows)
++    cols = [("уставка", "right")]
++    for n in names:
++        cols += [("%s max|dW| 1 с" % n, "right"), ("%s курс 1 с, °" % n, "right"), ("%s курс итог, °" % n, "right")]
++    rows = []
++    for lev in levels:
++        row = ["%.2f" % lev]
++        for _, ss in res:
++            r = next((x for x in ss if x["level"] == lev), None)
++            row += ["--"] * 3 if r is None else ["%.3f" % r["max_dw_tr"], "%+.2f" % r["yaw_1s"], "%+.2f" % r["yaw_end"]]
++        rows.append(row)
++    ui.table("Сравнение синхронности колёс", cols, rows, caption="max|dW| - об/с; курс > 0 - уводит влево")
++    return logs, levels, res
++
++
+ def make_plot(log, levels, rows, a):
+     if getattr(a, "no_plot", False):
+         return
+@@ -259,25 +383,58 @@
+     r.add_argument("--yes", action="store_true")
+     r.add_argument("--levels", default="0.05,0.5,1.5", help="уставки, об/с, через запятую")
+     r.add_argument("--boot-wait", type=float, default=5.0, help="пауза после открытия порта на загрузку платы, с (по умолчанию 5)")
+-    r.add_argument("--radius", type=float, default=0.065 / 2)
+-    r.add_argument("--out", default="step_log.csv")
++    r.add_argument("--out", default=None, help="CSV лога (по умолчанию step_log.csv или step_log_<mode>.csv)")
++    r.add_argument("--mode", choices=("pi", "ladrc"), help="регулятор на время опыта ($15 без сохранения во flash)")
++    r.add_argument("--adrc", help="параметры LADRC на время опыта: wc,wo,b0L,b0R[,ff] ($16 без сохранения)")
+     f = sub.add_parser("fit")
+     f.add_argument("csv")
+-    for p in (r, f):
+-        p.add_argument("--plot", default="step_plot.png", help="куда сохранить график (PNG)")
++    f.add_argument("--mode", choices=("pi", "ladrc"), help="каким регулятором снят лог (для подсказок)")
++    c = sub.add_parser("compare", help="сравнить несколько логов, например ПИ и LADRC")
++    c.add_argument("csv", nargs="+")
++    c.add_argument("--names", help="подписи через запятую (по умолчанию - имена файлов)")
++    for p in (r, f, c):
++        p.add_argument("--radius", type=float, default=0.065 / 2)
++        p.add_argument("--base", type=float, default=0.1775, help="база робота, м (WHEEL_BASE) - для набега курса")
++        p.add_argument("--plot", default=None, help="куда сохранить график (PNG)")
+         p.add_argument("--show", action="store_true", help="открыть график в окне")
+         p.add_argument("--no-plot", action="store_true", help="не строить график")
+     a = ap.parse_args()
+ 
++    if a.cmd == "compare":
++        names = a.names.split(",") if a.names else [pth.rsplit("/", 1)[-1].replace(".csv", "") for pth in a.csv]
++        if len(names) != len(a.csv):
++            sys.exit("--names: подписей должно быть столько же, сколько файлов")
++        logs, levels, res = compare(a.csv, names, a.radius, a.base)
++        if not a.no_plot:
++            from plots import plot_compare
++            plot_compare(logs, names, levels, a.radius, a.base, a.plot or "step_compare.png", a.show)
++        return
++
+     if a.cmd == "fit":
+         log = load_csv(a.csv)
+         levels = sorted({r[0] for r in log if r[0] > 0})   # уровень 0 - стартовая пауза до первой ступеньки
+         rows = analyze(log, levels)
+-        report(rows)
++        report(rows, a.mode)
++        report_sync(analyze_sync(log, levels, a.radius, a.base))
++        a.plot = a.plot or "step_plot.png"
+         make_plot(log, levels, rows, a)
+         return
+ 
+     levels = [float(x) for x in a.levels.split(",")]
++    setup = []
++    if a.adrc:
++        v = [float(x) for x in a.adrc.split(",")]
++        if len(v) not in (4, 5):
++            sys.exit("--adrc: нужно wc,wo,b0L,b0R[,ff]")
++        p = dict(wc=v[0], wo=v[1], b0L=v[2], b0R=v[3], ff=int(v[4]) if len(v) > 4 else 0)
++        for n in adrc.check(p):
++            ui.warn(n)
++        setup.append(adrc.command(p, save=False))
++    if a.mode:
++        setup.append("$15;%d;0;#" % (1 if a.mode == "ladrc" else 0))
++    suffix = ("_" + a.mode) if a.mode else ""
++    a.out = a.out or "step_log%s.csv" % suffix
++    a.plot = a.plot or "step_plot%s.png" % suffix
+     if a.sim:
+         link = ClosedSim(a.radius)
+     else:
+@@ -286,12 +443,16 @@
+             ui.warn("ВНИМАНИЕ: колёса будут вращаться до %.2f об/с. Поднимите робота, колёса в воздухе." % max(levels))
+             if input("Колёса подняты? Введите 'да': ").strip().lower() not in ("да", "yes", "y"):
+                 sys.exit("Отменено.")
+-    log = run_steps(link, a.radius, levels)
++    log = run_steps(link, a.radius, levels, setup)
+     save_csv(log, a.out)
+     ui.ok("Лог сохранён: %s (%d отсчётов)" % (a.out, len(log)))
+     rows = analyze(log, levels)
+-    report(rows)
++    report(rows, a.mode)
++    report_sync(analyze_sync(log, levels, a.radius, a.base))
+     make_plot(log, levels, rows, a)
++    if a.mode or a.adrc:
++        ui.say("Настройки --mode/--adrc действовали только в этом опыте: при следующем открытии порта плата "
++               "перезагрузится с тем, что сохранено во flash (adrc.py mode/set - сохранить).", "dim")
+ 
+ 
+ if __name__ == "__main__":

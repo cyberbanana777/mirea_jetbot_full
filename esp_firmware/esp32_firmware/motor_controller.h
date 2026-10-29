@@ -6,6 +6,13 @@
 #include <Adafruit_PWMServoDriver.h>
 #include <uPID.h>
 
+// Какой регулятор считает скважность в замкнутом режиме
+// Имена с префиксом k: в Arduino.h есть макрос PI, который ломает имя ControlMode::PI.
+enum class ControlMode : uint8_t {
+    kPi = 0,     // feedforward + ПИ с заморозкой интеграла и рампой страгивания
+    kLadrc = 1   // линейный ADRC первого порядка (наблюдатель расширенного состояния)
+};
+
 class MotorController {
 public:
     /**
@@ -54,6 +61,34 @@ public:
     // Feedforward: u_ff = sign(v) * (deadzone + gain * |v|), скважность ШИМ
     // gain - скважность на 1 м/с, deadzone - скважность, с которой колесо трогается
     void setFeedforward(float gainL, float deadzoneL, float gainR, float deadzoneR);
+
+    // Выбор регулятора. Переключение на ходу безударное: состояние нового регулятора
+    // (интеграл ПИ или оценки наблюдателя LADRC) подбирается так, чтобы на следующем такте
+    // скважность совпала с последней поданной.
+    void setControlMode(ControlMode mode);
+    ControlMode getControlMode() const { return _mode; }
+
+    /**
+     * Параметры LADRC (общие wc и wo для обоих колёс - одинаковая желаемая динамика).
+     * @param wc     полоса контура, рад/с (lambda = 1/wc)
+     * @param wo     полоса наблюдателя ESO, рад/с (beta1 = 2*wo, beta2 = wo^2)
+     * @param b0L    ускорение левого колеса на единицу скважности, (м/с^2)/1.0 = K/Tm
+     * @param b0R    то же для правого
+     * @param ffMode прямая подача по калибровке feedforward ($11), ESO оценивает остаток:
+     *               0 - нет (чистый LADRC: всё, включая мёртвую зону, находит наблюдатель),
+     *               1 - только мёртвая зона sign(r)*dz,
+     *               2 - полный статический feedforward sign(r)*(dz + gain*|r|), как у ПИ
+     */
+    void setAdrc(float wc, float wo, float b0L, float b0R, uint8_t ffMode);
+    float getAdrcWc() const { return _wc; }
+    float getAdrcWo() const { return _wo; }
+    float getAdrcB0Left() const { return _b0L; }
+    float getAdrcB0Right() const { return _b0R; }
+    uint8_t getAdrcFfMode() const { return _adrcFf; }
+    // Оценка суммарного возмущения f (z2 наблюдателя), м/с^2. В установившемся режиме
+    // -z2/b0 - это скважность, которую наблюдатель "нашёл" сам (аналог feedforward + интеграла).
+    float getDisturbanceLeft() const  { return _esoL.z2; }
+    float getDisturbanceRight() const { return _esoR.z2; }
 
     /**
      * Один такт контура скорости (вызывать строго по таймеру dt)
@@ -108,6 +143,17 @@ private:
     float _tgtPrevL, _tgtPrevR;    // заданная скорость на прошлом такте (обнаружение ступеньки)
     int16_t _frozenL, _frozenR;    // сколько тактов подряд интеграл заморожен при разгоне
 
+    // LADRC
+    struct Eso {
+        float z1 = 0.0f;  // оценка скорости, м/с
+        float z2 = 0.0f;  // оценка суммарного возмущения f, м/с^2
+        float u = 0.0f;   // поданная скважность (после ограничения) за вычетом прямой подачи
+    };
+    ControlMode _mode;
+    float _wc, _wo, _b0L, _b0R;
+    uint8_t _adrcFf;   // 0 - без прямой подачи, 1 - мёртвая зона, 2 - полный feedforward
+    Eso _esoL, _esoR;
+
     uint8_t _leftChannel, _rightChannel;
     bool _invertLeft, _invertRight;
     // Скважность ниже этой не подаётся на мотор (не пищать и не греть впустую)
@@ -119,6 +165,18 @@ private:
     // Один такт для одного колеса: feedforward + ПИ, возвращает скважность [-1, 1]
     float _wheelStep(uPID &pid, float meas, float gain, float deadzone, int8_t &prevSign,
                      int16_t &frozenTicks);
+
+    // Один такт LADRC для одного колеса, возвращает скважность [-1, 1]
+    float _wheelStepAdrc(float ref, float meas, float b0, float gain, float deadzone, int8_t &prevSign, Eso &eso);
+    // Прямая подача LADRC по калибровке feedforward (режим _adrcFf)
+    float _adrcFeedforward(float ref, float gain, float deadzone) const;
+
+    // Безударный переход: подготовить состояние нового регулятора по последней скважности
+    void _seedAdrc(Eso &eso, float ref, float meas, float uPrev, float b0, float gain, float deadzone);
+    void _seedPi(uPID &pid, float ref, float meas, float uPrev, float gain, float deadzone, int16_t &frozenTicks);
+
+    // Знак уставки с зоной нечувствительности около нуля: -1, 0, +1
+    static int8_t _signOf(float r);
 
     // Фильтр уставки одного колеса: target -> ref; сообщает о ступеньке заданной скорости
     void _filterRef(float target, float &ref, float &prevTarget, int16_t &frozenTicks, float alpha);

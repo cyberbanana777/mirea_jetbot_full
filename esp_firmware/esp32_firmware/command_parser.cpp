@@ -17,7 +17,7 @@ ParsedCommand CommandParser::parse(const char* str) {
   }
   if (*p != ';') return cmd;  // нет разделителя
   int rawType = atoi(typeStr);
-  const bool known = (rawType >= 1 && rawType <= 5) || (rawType >= 10 && rawType <= 14);
+  const bool known = (rawType >= 1 && rawType <= 5) || (rawType >= 10 && rawType <= 18);
   if (!known) return cmd;
   cmd.type = static_cast<Command>(rawType);
 

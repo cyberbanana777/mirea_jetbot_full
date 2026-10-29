@@ -14,6 +14,11 @@ public:
   }
   void putFloat(const char *k, float v) { store()[_ns + "/" + k] = v; }
   void putBool(const char *k, bool v) { store()[_ns + "/" + k] = v ? 1.0f : 0.0f; }
+  int32_t getInt(const char *k, int32_t def = 0) {
+    auto it = store().find(_ns + "/" + k);
+    return it == store().end() ? def : (int32_t)it->second;
+  }
+  void putInt(const char *k, int32_t v) { store()[_ns + "/" + k] = (float)v; }
 private:
   std::string _ns;
   static std::map<std::string, float> &store() { static std::map<std::string, float> m; return m; }

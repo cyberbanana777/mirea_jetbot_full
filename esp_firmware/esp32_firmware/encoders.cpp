@@ -8,6 +8,10 @@ volatile int32_t Encoders::_leftTotal = 0;
 volatile int32_t Encoders::_rightTotal = 0;
 volatile uint32_t Encoders::_leftLastUs = 0;
 volatile uint32_t Encoders::_rightLastUs = 0;
+volatile uint32_t Encoders::_leftPhaseUs[4] = {0, 0, 0, 0};
+volatile uint32_t Encoders::_rightPhaseUs[4] = {0, 0, 0, 0};
+volatile int8_t Encoders::_leftDir = 1;
+volatile int8_t Encoders::_rightDir = 1;
 // Для прерываний (машины состояний)
 volatile bool Encoders::_ReadPIN_R_A_A;
 volatile bool Encoders::_ReadPIN_R_B_A;
@@ -82,17 +86,48 @@ void Encoders::snapshotRight(int32_t &total, uint32_t &lastEdgeUs) {
   portEXIT_CRITICAL(&_mux);
 }
 
+void Encoders::snapshotLeftPhases(int32_t &total, uint32_t phaseUs[4], int8_t &lastDir) {
+  portENTER_CRITICAL(&_mux);
+  total = _leftTotal;
+  for (int i = 0; i < 4; ++i) phaseUs[i] = _leftPhaseUs[i];
+  lastDir = _leftDir;
+  portEXIT_CRITICAL(&_mux);
+}
+
+void Encoders::snapshotRightPhases(int32_t &total, uint32_t phaseUs[4], int8_t &lastDir) {
+  portENTER_CRITICAL(&_mux);
+  total = _rightTotal;
+  for (int i = 0; i < 4; ++i) phaseUs[i] = _rightPhaseUs[i];
+  lastDir = _rightDir;
+  portEXIT_CRITICAL(&_mux);
+}
+
 // Учёт одного фронта. Вызывается из прерывания внутри критической секции.
+// Номер фронта (тип = id & 3): id = большая из позиций до и после фронта.
 void IRAM_ATTR Encoders::_countR(int8_t d) {
+  const uint32_t now = micros();
+  const int32_t before = _rightTotal;
   _rightPos += d;
   _rightTotal += d;
-  _rightLastUs = micros();
+  _rightLastUs = now;
+  if (d != 0) {
+    const uint32_t id = (uint32_t)(d > 0 ? _rightTotal : before);
+    _rightPhaseUs[id & 3u] = now;
+    _rightDir = d;
+  }
 }
 
 void IRAM_ATTR Encoders::_countL(int8_t d) {
+  const uint32_t now = micros();
+  const int32_t before = _leftTotal;
   _leftPos += d;
   _leftTotal += d;
-  _leftLastUs = micros();
+  _leftLastUs = now;
+  if (d != 0) {
+    const uint32_t id = (uint32_t)(d > 0 ? _leftTotal : before);
+    _leftPhaseUs[id & 3u] = now;
+    _leftDir = d;
+  }
 }
 
 // обработчики прерываний (код из вашего файла, адаптированный):

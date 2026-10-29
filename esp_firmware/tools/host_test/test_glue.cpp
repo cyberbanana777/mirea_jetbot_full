@@ -1,6 +1,7 @@
 // Сквозная проверка "склейки" прошивки: компилируется настоящий esp32_firmware.ino, на заглушках
 // вызываются setup()/loop() с виртуальным временем, команды подаются через Serial.
-// Проверяется: команды $2/$10/$11/$12/$13, телеметрия 100 Гц, пауза одометрии, аварийная остановка по тишине.
+// Проверяется: команды $2/$10/$11/$12/$13/$14/$15/$16/$17, телеметрия 100 Гц, пауза одометрии, аварийная остановка
+// по тишине, безударное переключение ПИ <-> LADRC.
 #include "Arduino.h"
 #include <stdio.h>
 #include <string>
@@ -9,6 +10,7 @@
 #include <vector>
 #include <stdlib.h>
 #include "GyverOLED.h"
+#include "Preferences.h"
 #define private public
 #include "motor_controller.h"
 #undef private
@@ -19,6 +21,8 @@ extern MotorController controller;
 extern bool telemetry_on;
 extern float FF_GAIN_L, FF_DEADZONE_L;
 extern float KP_L, KI_L, KD_L, KP_R, KI_R, KD_R;
+extern float ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF;
+extern int CTRL_MODE;
 extern unsigned long control_next_us;
 static long g_minWindow = 1L << 30;
 static int g_chunks = 0;
@@ -137,6 +141,92 @@ int main() {
   cmd("$99;1;2;#garbage$7;1;#");
   run(0.05);
   check(controller.getTargetLeft() > 0.19f, "мусор и неизвестные типы игнорируются");
+
+  printf("9) $15/$16/$17 - LADRC: параметры, переключение режима, flash\n");
+  {
+    Serial.tx.clear();
+    char want[120];
+    snprintf(want, sizeof want, "$7;%d;%.3f;%.3f;%.4f;%.4f;%d;#", CTRL_MODE, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (int)ADRC_FF);
+    cmd("$17;#");
+    run(0.05);
+    check(Serial.tx.find(want) != std::string::npos, "ответ $7 с заводскими параметрами и режимом из config.h");
+    check(controller.getControlMode() == (CTRL_MODE == 1 ? ControlMode::kLadrc : ControlMode::kPi), "режим по умолчанию из config.h");
+    cmd("$15;0;0#");   // дальше проверки начинаются с ПИ
+    run(0.05);
+
+    cmd("$16;6;30;10;8;1;0#");   // ff = 1: только мёртвая зона
+    run(0.05);
+    Serial.tx.clear();
+    cmd("$13;#");
+    run(0.05);
+    check(Serial.tx.find("$7;0;6.000;30.000;10.0000;8.0000;1;#") != std::string::npos, "$16 принят, $13 тоже присылает $7");
+    check(controller.getAdrcWo() == 30.0f && controller.getAdrcB0Left() == 10.0f && controller.getAdrcFfMode() == 1, "параметры дошли до регулятора");
+    cmd("$16;6;500;0;8;0;0#");
+    run(0.05);
+    check(ADRC_WO == 100.0f && ADRC_B0_L == 0.5f && ADRC_FF == 0.0f, "wo и b0 ограничены, прямая подача выключена");
+    cmd("$16;nan;30;10;8;0;0#");
+    run(0.05);
+    check(ADRC_WC == 6.0f, "NaN отвергнут");
+    cmd("$16;5;25;9.82;7.65;2;0#");
+    run(0.05);
+    cmd("$11;0.5848;0.1073;0.9133;0.1114;0;#");   // в разделе 5 мёртвая зона FF была задрана до 0.9
+    run(0.05);
+
+    // Безударность: колёса стоят (энкодеры не крутятся), скважность растёт медленно (рампа ПИ);
+    // в момент переключения она не должна скачком меняться
+    cmd("$2;0;0;#");
+    run(0.05);
+    cmd("$2;0.1;0.1;#");
+    run(0.08);
+    const float uPi = controller.getOutputLeft();
+    cmd("$15;1;0#");
+    run(0.0101);   // один такт
+    const float uAdrc = controller.getOutputLeft();
+    printf("   скважность до/после переключения ПИ->LADRC: %.4f / %.4f\n", uPi, uAdrc);
+    check(controller.getControlMode() == ControlMode::kLadrc, "режим LADRC");
+    check(uPi > 0.1f && uPi < 0.9f && fabsf(uAdrc - uPi) < 0.03f, "ПИ -> LADRC без скачка скважности (вне насыщения)");
+    run(0.1);
+    check(controller.getOutputLeft() > uAdrc + 0.02f, "LADRC продолжает поднимать тягу, пока колесо стоит (оценка возмущения растёт)");
+    const float uA = controller.getOutputLeft();
+    cmd("$15;0;0#");
+    run(0.0101);
+    const float uP = controller.getOutputLeft();
+    printf("   скважность до/после переключения LADRC->ПИ: %.4f / %.4f\n", uA, uP);
+    check(controller.getControlMode() == ControlMode::kPi && uA < 0.95f && fabsf(uP - uA) < 0.03f, "LADRC -> ПИ без скачка скважности");
+
+    cmd("$2;0;0;#");
+    run(0.05);
+    cmd("$15;1;1#");
+    run(0.05);
+    Preferences pr;
+    pr.begin("Memory2", true);
+    check(pr.getInt("CtrlMode", -1) == 1, "режим сохранён во flash ($15 с save = 1)");
+    cmd("$16;5;25;9.82;7.65;2;1#");
+    run(0.05);
+    check(pr.getFloat("AdrcWo", -1) == 25.0f && pr.getFloat("AdrcB0R", -1) > 7.64f && pr.getFloat("AdrcFf", -1) == 2.0f, "параметры LADRC сохранены во flash");
+    pr.end();
+    cmd("$2;0.1;0.1;#");
+    run(0.3);
+    check(controller._pwm.pins[2] > 100 && controller._pwm.pins[3] == 0, "в режиме LADRC правый мотор тянет вперёд");
+    cmd("$2;0;0;#");
+    run(0.05);
+    check(controller._pwm.pins[2] == 0 && controller.getDisturbanceLeft() == 0.0f, "остановка: мотор выключен, оценка возмущения сброшена");
+    cmd("$15;0;1#");   // вернуть ПИ для остальных проверок
+    run(0.05);
+  }
+
+  printf("9b) $18 - окно оценки скорости (отладка)\n");
+  Serial.tx.clear();
+  cmd("$18;#");
+  run(0.05);
+  check(Serial.tx.find("$8;2;1;#") != std::string::npos, "запрос: окно из config.h (2 фронта, целые метки)");
+  cmd("$18;4;0;#");
+  run(0.05);
+  cmd("$18;99;#");
+  run(0.05);
+  check(Serial.tx.find("$8;4;0;#") != std::string::npos && Serial.tx.find("$8;8;0;#") != std::string::npos, "окно и выравнивание меняются, окно ограничено 8");
+  cmd("$18;2;1;#");
+  run(0.05);
 
   printf("7) дисплей: кадр уходит по кускам только в свободном окне между тактами\n");
   g_onOledChunk = onChunk;

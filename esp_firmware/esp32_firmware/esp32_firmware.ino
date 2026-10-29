@@ -4,10 +4,10 @@
 
 /**
   @author Alice Zenina, Alexander Grachev and Ilya Monakhov RTU MIREA (Russia)
-  @date 25.10.2026
-  @version 2.3.0
+  @date 28.10.2026
+  @version 2.4.0
 */
-const char *VERSION = "2.3.0";
+const char *VERSION = "2.4.0";
 
 #include <Arduino.h>
 #include <math.h>
@@ -65,7 +65,8 @@ DiffDriveOdometry odometry(WHEEL_BASE);
 
 // Оценка скорости колёс по фронтам (M/T-метод), по одному оценщику на колесо
 const MTSpeedParams SPEED_PARAMS = {1.0f / ENC_EDGES_PER_REV, SPEED_TIMEOUT_US,
-                                    SPEED_MIN_EDGES, SPEED_MAX_SANE_REV_S, SPEED_FILTER_K};
+                                    SPEED_MIN_EDGES, SPEED_MAX_SANE_REV_S, SPEED_FILTER_K,
+                                    SPEED_ALIGN_QUAD};
 MTSpeedEstimator speedR(SPEED_PARAMS);
 MTSpeedEstimator speedL(SPEED_PARAMS);
 
@@ -293,21 +294,24 @@ bool i2cWindowOpen()
 
 /**
  * @brief Один такт контура скорости (100 Гц): оценка скорости колёс по фронтам
- * энкодеров и обновление регуляторов (feedforward + ПИ).
+ * энкодеров и обновление регуляторов (feedforward + ПИ или LADRC, см. $15).
  */
 void controlStep()
 {
   // Снимок (позиция, время последнего фронта) для каждого колеса, затем время "сейчас":
   // возраст последнего фронта получается неотрицательным
+  // (позиция, время последнего фронта каждого из 4 типов, направление) для каждого колеса,
+  // затем время "сейчас": возраст фронтов получается неотрицательным
   int32_t posR, posL;
-  uint32_t lastR, lastL;
-  encoders.snapshotRight(posR, lastR);
-  encoders.snapshotLeft(posL, lastL);
+  uint32_t phR[4], phL[4];
+  int8_t dirR, dirL;
+  encoders.snapshotRightPhases(posR, phR, dirR);
+  encoders.snapshotLeftPhases(posL, phL, dirL);
   const uint32_t now = micros();
 
   // об/с -> м/с; знак колеса приводится так, чтобы вперёд было > 0 у обоих
-  const float revR = ENC_SIGN_R * speedR.update(posR, lastR, now);
-  const float revL = ENC_SIGN_L * speedL.update(posL, lastL, now);
+  const float revR = ENC_SIGN_R * speedR.updateAligned(posR, phR, dirR, now);
+  const float revL = ENC_SIGN_L * speedL.updateAligned(posL, phL, dirL, now);
   const float rightLinVel = revR * 2 * Pi * WHEEL_RADIUS;
   const float leftLinVel = revL * 2 * Pi * WHEEL_RADIUS;
 
@@ -367,6 +371,13 @@ void setup()
   // Фильтр уставки: значение из config.h, если не менялось командой $14 с сохранением
   flashStorage.loadRefTau(REF_TAU_S);
   controller.setRefFilter(REF_TAU_S);
+
+  // Регулятор (ПИ или LADRC) и параметры LADRC: значения из config.h, если не сохранялись ($15/$16)
+  flashStorage.loadAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF);
+  ADRC_FF = constrain(roundf(ADRC_FF), 0.0f, 2.0f);
+  controller.setAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (uint8_t)ADRC_FF);
+  flashStorage.loadCtrlMode(CTRL_MODE);
+  controller.setControlMode(CTRL_MODE == 1 ? ControlMode::kLadrc : ControlMode::kPi);
 
   controller.setWheelSpeeds(0.0, 0.0);
 
@@ -519,6 +530,7 @@ void loop()
     case Command::REQUEST_FF:
       feedforwardPublish(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
       refFilterPublish(REF_TAU_S);
+      adrcPublish(CTRL_MODE, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (int)ADRC_FF);
       break;
 
     case Command::SET_REF_FILTER:
@@ -529,6 +541,54 @@ void loop()
         if (cmd.count >= 2 && cmd.args[1] >= 0.5f)
           flashStorage.saveRefTau(REF_TAU_S);
       }
+      break;
+
+    case Command::SET_CTRL_MODE:
+      // $15;mode;save#  0 - ПИ, 1 - LADRC. Переключение безударное, можно на ходу
+      if (cmd.count >= 1 && isfinite(cmd.args[0]))
+      {
+        CTRL_MODE = (cmd.args[0] >= 0.5f) ? 1 : 0;
+        controller.setControlMode(CTRL_MODE == 1 ? ControlMode::kLadrc : ControlMode::kPi);
+        if (cmd.count >= 2 && cmd.args[1] >= 0.5f)
+          flashStorage.saveCtrlMode(CTRL_MODE);
+      }
+      break;
+
+    case Command::SET_ADRC:
+      // $16;wc;wo;b0_L;b0_R;ff;save#  ff: 0 - без прямой подачи, 1 - мёртвая зона, 2 - полный FF (ff и save необязательны, по умолчанию 0)
+      if (cmd.count >= 4 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]) &&
+          isfinite(cmd.args[2]) && isfinite(cmd.args[3]))
+      {
+        ADRC_WC = constrain(cmd.args[0], 0.5f, 50.0f);
+        ADRC_WO = constrain(cmd.args[1], 1.0f, 100.0f);   // wo*dt <= 1 при 10 мс (рекомендуется <= 0.5)
+        ADRC_B0_L = constrain(cmd.args[2], 0.5f, 200.0f);
+        ADRC_B0_R = constrain(cmd.args[3], 0.5f, 200.0f);
+        ADRC_FF = (cmd.count >= 5 && isfinite(cmd.args[4])) ? constrain(roundf(cmd.args[4]), 0.0f, 2.0f) : 0.0f;
+        controller.setAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (uint8_t)ADRC_FF);
+        if (cmd.count >= 6 && cmd.args[5] >= 0.5f)
+          flashStorage.saveAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF);
+      }
+      break;
+
+    case Command::REQUEST_ADRC:
+      adrcPublish(CTRL_MODE, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (int)ADRC_FF);
+      break;
+
+    case Command::SET_SPEED_WINDOW:
+      // $18;n;align#  окно оценки скорости (отладка шума, tools/noisetest.py), не сохраняется;
+      // n - минимум фронтов (1..8), align - 1: окно из целых меток, 0: как раньше. $18;# - запрос
+      if (cmd.count >= 1 && isfinite(cmd.args[0]))
+      {
+        const int32_t n = constrain((int32_t)lroundf(cmd.args[0]), (int32_t)1, (int32_t)8);
+        speedL.setMinEdges(n);
+        speedR.setMinEdges(n);
+      }
+      if (cmd.count >= 2 && isfinite(cmd.args[1]))
+      {
+        speedL.setAlignQuad(cmd.args[1] >= 0.5f);
+        speedR.setAlignQuad(cmd.args[1] >= 0.5f);
+      }
+      speedWindowPublish(speedL.minEdges(), speedL.alignQuad() ? 1 : 0);
       break;
 
     case Command::UNKNOWN:
