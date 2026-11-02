@@ -17,7 +17,9 @@ class DispatcherCoverageTests(unittest.TestCase):
 
     def test_main_loop_has_one_dispatch_entry(self):
         ino = (ROOT / 'esp32_firmware.ino').read_text(encoding='utf-8')
-        self.assertEqual(ino.count('dispatchCommand(cmd, commandContext);'), 1)
+        service = (ROOT / 'serial_service.cpp').read_text(encoding='utf-8')
+        self.assertEqual(service.count('dispatchCommand(cmd, ctx_.commands);'), 1)
+        self.assertNotIn('dispatchCommand(', ino)
         for name in ('REQUEST_PID_TX', 'SET_PID_TX', 'REQUEST_INFO', 'REQUEST_DIAGNOSTICS'):
             self.assertNotIn('cmd.type == Command::' + name, ino)
 

@@ -29,6 +29,8 @@ const char *VERSION = "2.4.0";
 #include "command_policy.h"
 #include "command_dispatcher.h"
 #include "safety_policy.h"
+#include "control_scheduler.h"
+#include "serial_service.h"
 
 Encoders encoders;
 ErrorManager error_manager;
@@ -106,12 +108,14 @@ bool oledOk = true;
 
 // Construct after all referenced hardware status flags have been declared.
 CommandContext commandContext = {
-  controller, flashStorage, speedL, speedR,
-  KP_L, KI_L, KD_L, KP_R, KI_R, KD_R,
-  FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R,
-  REF_TAU_S, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF,
-  CTRL_MODE, telemetry_on, telemetry_div,
-  accepted_commands, rejected_commands, watchdog_stop_count, inaOk, pwmOk
+  {controller, telemetry_on, telemetry_div},
+  {controller, flashStorage, speedL, speedR,
+   KP_L, KI_L, KD_L, KP_R, KI_R, KD_R,
+   FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R,
+   REF_TAU_S, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF,
+   CTRL_MODE, accepted_commands, rejected_commands},
+  {controller, accepted_commands, rejected_commands,
+   watchdog_stop_count, inaOk, pwmOk}
 };
 
 // счётчики ошибок подряд
@@ -261,6 +265,15 @@ void parseJetsonMessage(const char *fullMessage)
   }
 }
 
+
+// Service owns no state; all referenced objects are constructed above.
+SerialServiceContext serialServiceContext = {
+  mainReceiver, jetsonReceiver, commandContext,
+  emergency_timer, watchdog_stop_latched, accepted_commands, rejected_commands,
+  inaOk, pwmOk, bus_voltage, min_voltage, parseJetsonMessage
+};
+SerialService serialService(serialServiceContext);
+
 /**
 * @brief Преобразет тики в частоту вращения (об/с)
 * @param ticks - счётчик тактов из прерываний
@@ -309,7 +322,7 @@ float convert_ticks_to_distance(long ticks, char dir)
  */
 bool i2cWindowOpen()
 {
-  return (long)(control_next_us - micros()) > (long)I2C_WINDOW_MIN_US;
+  return ControlScheduler::i2cWindowOpen(control_next_us, I2C_WINDOW_MIN_US);
 }
 
 /**
@@ -419,8 +432,7 @@ void loop()
 {
 
   // Приём с обоих каналов
-  mainReceiver.update();
-  jetsonReceiver.update();
+  serialService.poll();
 
   const bool host_silent = (millis() - emergency_timer > emergency_timer_timeout);
   if (SafetyPolicy::mustStop(host_silent, inaOk, pwmOk, bus_voltage, min_voltage) &&
@@ -439,24 +451,15 @@ void loop()
   unsigned long now = micros();
 
   // Контур скорости: каждые CONTROL_PERIOD_US (10 мс, 100 Гц)
-  if ((long)(now - control_next_us) >= 0)
+  if (ControlScheduler::controlDue(now, control_next_us, CONTROL_PERIOD_US))
   {
-    control_next_us += CONTROL_PERIOD_US;
-    if ((long)(now - control_next_us) >= 0)
-    {
-      // Опоздали больше чем на период (долгая операция): пропущенные такты не догоняем
-      control_next_us = now + CONTROL_PERIOD_US;
-    }
     controlStep();
     now = micros();
   }
 
-  unsigned long odom_delta = now - odom_tmr;
-
   // Одометрия: каждые odom_timer_timeout (20 мс, 50 Гц)
-  if (odom_delta >= odom_timer_timeout)
+  if (ControlScheduler::odometryDue(now, odom_tmr, odom_timer_timeout))
   {
-    odom_tmr = now;
 
     // 1. Тики энкодеров за период одометрии
     int32_t rightTicks = encoders.getRightAndReset();
@@ -476,42 +479,9 @@ void loop()
     }
   }
 
-  // Обработка входного значения
-  for (uint8_t frames = 0; frames < 4 && mainReceiver.available(); ++frames)
-  {
-    const char *raw_0 = mainReceiver.getMessage(); // теперь это C-строка
-    ParsedCommand cmd = CommandParser::parse(raw_0);
-    // A malformed frame or a configuration query must not keep motors alive.
-    // Validate count and command family before refreshing the motion watchdog.
-    if (!CommandPolicy::validShape(cmd)) {
-      ++rejected_commands;
-      mainReceiver.update();
-      continue;
-    }
-    if (CommandPolicy::refreshesMotionWatchdog(cmd.type)) {
-      // Never arm motors during a detected peripheral/voltage fault.
-      if (SafetyPolicy::mustStop(false, inaOk, pwmOk, bus_voltage, min_voltage) ||
-          !CommandPolicy::validMotionValues(cmd)) {
-        ++rejected_commands;
-        mainReceiver.update();
-        continue;
-      }
-      emergency_timer = millis();
-      watchdog_stop_latched = false;
-    }
-
-    ++accepted_commands;
-    dispatchCommand(cmd, commandContext);
-    mainReceiver.update();
-  }
-
-  // Сообщение от Jetson с информацией о его сети (для OLED-дисплея)
-  if (jetsonReceiver.available())
-  {
-    const char *raw_1 = jetsonReceiver.getMessage();
-    parseJetsonMessage(raw_1);
-    jetsonReceiver.update();
-  }
+  // Обработчики UART сохраняют прежний порядок и ограничение 4 кадра за loop().
+  serialService.processCommands();
+  serialService.processSecondary();
 
   // Медленные операции I2C - только в свободном окне между тактами контура
   if ((millis() - update_timer >= update_voltage_timer_timeout) && inaOk && i2cWindowOpen())

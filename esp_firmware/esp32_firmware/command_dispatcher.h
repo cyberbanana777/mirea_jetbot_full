@@ -1,12 +1,19 @@
 #ifndef COMMAND_DISPATCHER_H
 #define COMMAND_DISPATCHER_H
+
 #include "command_parser.h"
 #include "motor_controller.h"
 #include "flash_storage.h"
 #include "speed_estimator.h"
 
-// Non-owning dependencies. Control math and persistent storage remain unchanged.
-struct CommandContext {
+// Each service receives only its own non-owning dependencies.
+struct MotionContext {
+  MotorController& controller;
+  bool& telemetry_on;
+  uint8_t& telemetry_div;
+};
+
+struct ConfigContext {
   MotorController& controller;
   FlashStorageManager& flashStorage;
   MTSpeedEstimator& speedL;
@@ -28,13 +35,23 @@ struct CommandContext {
   float& ADRC_B0_R;
   float& ADRC_FF;
   int& CTRL_MODE;
-  bool& telemetry_on;
-  uint8_t& telemetry_div;
+  uint32_t& accepted_commands;
+  uint32_t& rejected_commands;
+};
+
+struct DiagnosticsContext {
+  MotorController& controller;
   uint32_t& accepted_commands;
   uint32_t& rejected_commands;
   uint32_t& watchdog_stop_count;
   bool& inaOk;
   bool& pwmOk;
+};
+
+struct CommandContext {
+  MotionContext motion;
+  ConfigContext config;
+  DiagnosticsContext diagnostics;
 };
 
 void dispatchCommand(const ParsedCommand& cmd, CommandContext& ctx);
