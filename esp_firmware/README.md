@@ -161,3 +161,8 @@ before tagging this version.
 ### v2.2.7 HardwareMonitor
 
 Extracted the existing INA219 sample and I2C device monitoring into `hardware_monitor.h/.cpp`. The main loop still gates these operations on the same scheduler window and interval and preserves the order relative to the display and safety handling. Original reinitialization logic and error thresholds remain unchanged. Manual ESP32 compile and safe UART bench are required before tagging. No automatic build validation is added.
+
+
+### v2.2.8: SafetyManager extraction
+
+The unchanged watchdog/STOP decision block is now in `safety_manager.h/.cpp`, with non-owning references to the existing motion-command timer, latch, counter and telemetry flag. `SerialService` continues to refresh the same timer and clear the same latch. `loop()` invokes `safetyManager.check()` at exactly the previous location, immediately after UART polling. UART protocol, controller, I2C, PWM and control periods remain unchanged. Manual ESP32 build and safe hardware UART suite are required before tagging.

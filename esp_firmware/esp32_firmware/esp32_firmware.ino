@@ -33,6 +33,7 @@ const char *VERSION = "2.4.0";
 #include "serial_service.h"
 #include "control_loop_service.h"
 #include "hardware_monitor.h"
+#include "safety_manager.h"
 
 Encoders encoders;
 ErrorManager error_manager;
@@ -185,6 +186,14 @@ SerialServiceContext serialServiceContext = {
 };
 SerialService serialService(serialServiceContext);
 
+// Shares the motion watchdog state with SerialService; no new timer or latch.
+SafetyManagerContext safetyManagerContext = {
+  controller, emergency_timer, emergency_timer_timeout,
+  watchdog_stop_count, watchdog_stop_latched, telemetry_on,
+  inaOk, pwmOk, bus_voltage, min_voltage
+};
+SafetyManager safetyManager(safetyManagerContext);
+
 /**
 * @brief Преобразет тики в частоту вращения (об/с)
 * @param ticks - счётчик тактов из прерываний
@@ -267,19 +276,7 @@ void loop()
   // Приём с обоих каналов
   serialService.poll();
 
-  const bool host_silent = (millis() - emergency_timer > emergency_timer_timeout);
-  if (SafetyPolicy::mustStop(host_silent, inaOk, pwmOk, bus_voltage, min_voltage) &&
-      !controller.isStopped()) {
-    controller.emergencyStop();
-  }
-  if (host_silent && !watchdog_stop_latched) {
-    ++watchdog_stop_count;
-    watchdog_stop_latched = true;
-  }
-  if (host_silent)
-  {
-    telemetry_on = false; // нет связи: канал нужен одометрии
-  }
+  safetyManager.check();
 
   unsigned long now = micros();
 
