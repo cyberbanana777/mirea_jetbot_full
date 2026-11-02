@@ -60,14 +60,18 @@ bool MotorController::begin() {
 }
 
 bool MotorController::reinitializePWM() {
-    _pwm.reset();
-    _pwm.setPWMFreq(1000);
-    delay(1);
-    // После сброса PCA9685 все каналы выключены, так что безопасно
-    _lastDir[0] = 2;  // состояние каналов неизвестно: следующая запись выключит обе стороны моста
-    _lastDir[1] = 2;
-    emergencyStop();
-    return true;
+  // begin() checks the I2C device acknowledgement; reset()/setPWMFreq()
+  // alone cannot report an absent PCA9685 and previously returned false success.
+  if (!_pwm.begin()) {
+    emergencyStop(); // Keep internal motion state stopped even if I2C is down.
+    return false;
+  }
+  _pwm.setPWMFreq(1000);
+  delay(1);
+  _lastDir[0] = 2;
+  _lastDir[1] = 2;
+  emergencyStop();
+  return true;
 }
 void MotorController::emergencyStop() {
   _stopped = true;

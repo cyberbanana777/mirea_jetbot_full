@@ -17,16 +17,25 @@ void StartupService::begin()
   Wire.setTimeOut(50); // 50 мс таймаут на транзакцию
   Wire.setClock(I2C_CLOCK_HZ);
 
-  ctx_.error_manager.soft_check_exec(ctx_.probe(0x3C), "Warning! OLED-display is unaviable through I2C bus");
-  ctx_.error_manager.soft_check_exec(ctx_.probe(0x41), "Warning! INA219 sensor is unaviable through I2C bus");
-  ctx_.error_manager.soft_check_exec(ctx_.probe(0x60), "Warning! PWM-controller is unaviable through I2C bus");
+  const bool oledDetected = ctx_.probe(0x3C);
+  ctx_.error_manager.soft_check_exec(oledDetected, "Warning! OLED-display is unaviable through I2C bus");
+  const bool inaDetected = ctx_.probe(0x41);
+  ctx_.error_manager.soft_check_exec(inaDetected, "Warning! INA219 sensor is unaviable through I2C bus");
+  const bool pwmDetected = ctx_.probe(0x60);
+  ctx_.error_manager.soft_check_exec(pwmDetected, "Warning! PWM-controller is unaviable through I2C bus");
 
   ctx_.error_manager.check_exec(ctx_.encoders.begin(PIN_R_A, PIN_R_B, PIN_L_A, PIN_L_B), "Error! Failed to init encoders");
-  ctx_.error_manager.check_exec(ctx_.controller.begin(), "Error! Failed to init motor controller");
+  const bool pwmInitialized = ctx_.controller.begin();
+  ctx_.pwmOk = pwmDetected && pwmInitialized;
+  ctx_.error_manager.check_exec(pwmInitialized, "Error! Failed to init motor controller");
 
-  ctx_.error_manager.check_exec(ctx_.INA.begin(), "Error! Failed to init INA219 module.");
+  const bool inaInitialized = ctx_.INA.begin();
+  ctx_.inaOk = inaDetected && inaInitialized;
+  ctx_.error_manager.check_exec(inaInitialized, "Error! Failed to init INA219 module.");
 
-  ctx_.error_manager.check_exec(ctx_.display.begin((char *)ctx_.version), "Error! OLED init failed.");
+  const bool oledInitialized = ctx_.display.begin((char *)ctx_.version);
+  ctx_.oledOk = oledDetected && oledInitialized;
+  ctx_.error_manager.check_exec(oledInitialized, "Error! OLED init failed.");
   Wire.setClock(I2C_CLOCK_HZ); // display.begin() вызывает Wire.begin() ещё раз
 
   delay(100);

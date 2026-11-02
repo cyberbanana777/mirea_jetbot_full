@@ -175,3 +175,19 @@ delegation and the existing `loop()`. No NVS, PID/LADRC, UART, or safety semanti
 
 Build and flash manually with Arduino IDE, then run the safe hardware suite. No automated
 ESP32 firmware compilation is part of this repository's checks.
+
+### v2.3.1 — Hardware status and PCA9685 recovery (manual firmware build required)
+
+- Startup I²C health flags default to **unconfirmed (`false`)**, then reflect
+  the address probes **and** device initialization results.
+- `MotorController::reinitializePWM()` now checks the PCA9685 `begin()` result
+  instead of reporting success after unchecked `reset()`/frequency writes.
+  It keeps internal motor commands stopped on initialization failure.
+- HardwareMonitor additionally probes the PCA9685 after its recovery attempt
+  before setting `pwmOk=true`.
+- UART API, PID/LADRC math, startup operation order, watchdog thresholds,
+  and existing I²C polling interval are unchanged.
+- No physical output verification is implied by I²C ACK. Without independent
+  power isolation, a bus failure cannot guarantee motor de-energization.
+- Rebuild and flash manually, then run the SAFE UART suite (7/7 expected).
+  This test does **not** exercise actual I²C faults, motor PWM, or NVS writes.

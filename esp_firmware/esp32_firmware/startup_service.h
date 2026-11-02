@@ -22,6 +22,9 @@ struct StartupContext {
   MTSpeedEstimator &speedR;
   unsigned long &odom_tmr;
   unsigned long &control_next_us;
+  bool &inaOk;
+  bool &pwmOk;
+  bool &oledOk;
   const char *version;
   bool (*probe)(uint8_t);
 };

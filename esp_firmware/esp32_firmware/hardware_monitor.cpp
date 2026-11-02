@@ -72,7 +72,7 @@ void HardwareMonitor::checkI2CDevices() {
     if (pwmErrors >= ctx_.maxI2cErrors)
     {
       pwmOk = false;
-      if (controller.reinitializePWM())
+      if (controller.reinitializePWM() && ctx_.probe(0x60))
       {
         pwmOk = true;
         pwmErrors = 0;

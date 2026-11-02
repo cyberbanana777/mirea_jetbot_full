@@ -113,9 +113,9 @@ float bus_voltage = 0.0f, shunt_v = 0.0f, current = 0.0f;
 int pros;
 
 // состояние устройств
-bool inaOk = true;
-bool pwmOk = true;
-bool oledOk = true;
+bool inaOk = false;
+bool pwmOk = false;
+bool oledOk = false;
 
 // Construct after all referenced hardware status flags have been declared.
 CommandContext commandContext = {
@@ -199,7 +199,7 @@ SafetyManager safetyManager(safetyManagerContext);
 StartupContext startupContext = {
   error_manager, encoders, controller, INA, display, flashStorage,
   emergency_timer, speedL, speedR, odom_tmr, control_next_us,
-  VERSION, i2cProbe
+  inaOk, pwmOk, oledOk, VERSION, i2cProbe
 };
 StartupService startupService(startupContext);
 
