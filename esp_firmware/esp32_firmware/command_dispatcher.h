@@ -30,6 +30,11 @@ struct CommandContext {
   int& CTRL_MODE;
   bool& telemetry_on;
   uint8_t& telemetry_div;
+  uint32_t& accepted_commands;
+  uint32_t& rejected_commands;
+  uint32_t& watchdog_stop_count;
+  bool& inaOk;
+  bool& pwmOk;
 };
 
 void dispatchCommand(const ParsedCommand& cmd, CommandContext& ctx);

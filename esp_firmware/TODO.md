@@ -20,3 +20,7 @@
 - v2.1 intentionally has no transactional ACK/NACK. Design request sequence IDs and acknowledge *applied* settings (including NVS failure handling), then add host tests.
 - `402` diagnostics count structural rejects, not malformed frame overflows and not semantic invalidity inside dispatch handlers. Add separate parser/validation metrics.
 - Safety: watchdog timing and physical zero-PWM still need hardware verification; no separate motor-power cutoff exists.
+
+- v2.2: NACK for malformed frames with unusable `request_id` is impossible; add envelope-level framing, checksum and request IDs when redesigning wire transport.
+- v2.2: transactional NVS operations not implemented; existing legacy configuration setters still lack acknowledgements.
+- v2.2: ack for 210 reports software apply, not motor or Flash verification; validate on hardware.

@@ -12,7 +12,7 @@ from pathlib import Path
 from client import Client
 
 # Only permitted outbound IDs: STOP and read-only PID request.
-ALLOWED_TX_IDS = {103, 202, 402, 501}
+ALLOWED_TX_IDS = {103, 202, 211, 402, 501}
 MALFORMED = [
     ('unknown_id', b'$999;#'),
     ('non_numeric_id', b'$abc;#'),
@@ -66,16 +66,43 @@ def query_frame(dev, request_id, expected_fields, timeout=2.0):
     return None
 
 
+def transactional_checks(dev, pid_before):
+    # New read is sequence-correlated; no coefficients are changed.
+    seq = 314
+    dev.send(211, seq)
+    response = None
+    for frame in dev.receive(2.0):
+        if frame.id == 211 and len(frame.fields) == 7 and frame.fields[0] == seq:
+            response = list(frame.fields[1:])
+            break
+    # Invalid values only: this command must return NACK without altering PID.
+    # Literal 210 is intentionally NOT permitted through the general send() helper.
+    dev.serial.write(b'$210;315;-1;5;0;1;10;0;#\n')
+    dev.serial.flush()
+    nack = False
+    for frame in dev.receive(2.0):
+        if frame.id == 503 and list(frame.fields) == [315.0, 210.0, 1.0]:
+            nack = True
+            break
+    after = pid_query(dev, 2.0)
+    return {'status': 'PASS' if response == pid_before and nack and after == pid_before else 'FAIL',
+            'correlated_pid': response, 'nack_invalid_pid': nack, 'pid_unchanged': after == pid_before}
+
+
 def run_suite(dev, duration, rows, malformed=True):
     results = {}
     info = query_frame(dev, 501, 2)
-    results['UART-INFO-001'] = {'status': 'PASS' if info == [2.0, 1.0] else 'FAIL', 'version': info}
+    results['UART-INFO-001'] = {'status': 'PASS' if info == [2.0, 2.0] else 'FAIL', 'version': info}
     snapshot_before = query_frame(dev, 402, 7)
     results['UART-DIAG-001'] = {'status': 'PASS' if snapshot_before is not None and all(math.isfinite(x) for x in snapshot_before) else 'FAIL', 'snapshot': snapshot_before, 'fields': ['uptime_ms', 'accepted', 'rejected', 'watchdog_stops', 'stopped', 'ina_ok', 'pwm_ok']}
     baseline = capture(dev, duration, rows, 'baseline')
     results['UART-ODOM-001'] = {'status': 'PASS' if baseline['frames'] >= 10 and baseline['decode_errors'] == 0 and baseline['overflow'] == 0 else 'FAIL', 'metrics': baseline}
     pid_before = pid_query(dev, 2.0)
     results['UART-CONFIG-001'] = {'status': 'PASS' if pid_before is not None and all(math.isfinite(x) for x in pid_before) else 'FAIL', 'pid': pid_before}
+    if pid_before is not None:
+        results['UART-TXCONFIG-001'] = transactional_checks(dev, pid_before)
+    else:
+        results['UART-TXCONFIG-001'] = {'status': 'SKIP', 'reason': 'no PID baseline'}
     if results['UART-ODOM-001']['status'] != 'PASS' or results['UART-CONFIG-001']['status'] != 'PASS':
         results['UART-PARSER-001'] = {'status': 'SKIP', 'reason': 'baseline failed'}
         results['MOTOR-SAFETY-001-UART'] = {'status': 'SKIP', 'reason': 'baseline failed'}
@@ -114,7 +141,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     rows = []
-    print('SAFE UART suite: no motion commands, no NVS writes. STOP, PID, version and diagnostics queries only.')
+    print('SAFE UART suite: no motion commands, no NVS writes. STOP, read-only queries, and invalid PID NACK probe only.')
     try:
         with Client(a.port, a.baud) as dev:
             time.sleep(0.3)

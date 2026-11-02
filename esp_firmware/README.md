@@ -62,3 +62,27 @@ be performed by the operator.
 ### v2.1 hardware regression
 
 After flashing the updated firmware, run the same `hardware_suite.py` command. It now also queries `501` and `402`. This extension does not exercise motion or NVS writes. Firmware build and hardware behavior are unverified in this release; validate on your setup.
+
+## v2.2 safe bench suite
+
+After flashing v2.2 and updating tools, run:
+
+```bash
+python3 tools/uart_bench/hardware_suite.py --port /dev/ttyUSB0 --duration 2.5 --output reports/
+```
+
+The new `UART-TXCONFIG-001` sends a sequenced *read* of PID and one deliberately invalid PID-RAM update (`KpL=-1`) to verify `503 NACK`. No valid gain modification or NVS write occurs. **No motor commands are sent** except STOP. Expected version is `2.2`. Prior hardware validation (6/6) was on v2.1, not v2.2.
+
+## v2.2.1 — single command dispatcher
+
+All validated main-UART commands, including IDs 210, 211, 402 and 501, now flow
+through `dispatchCommand()` in `command_dispatcher.cpp`. The `.ino` main loop
+retains framing, shape validation, motion-watchdog gating, and diagnostic
+counters; no longer contains a second command router. `CommandContext` holds
+non-owning references to the diagnostic counters/device flags used by those
+handlers. The on-wire protocol and controller parameters are unchanged.
+
+Offline regression: `python3 -m unittest discover -s tools/uart_bench -p 'test_*.py' -v`.
+The new source-level dispatch coverage test checks enum/switch exhaustiveness,
+but is **not** a substitute for compiling for ESP32. Run the established safe
+`hardware_suite.py` after flashing, and confirm the previous 7/7 PASS baseline.

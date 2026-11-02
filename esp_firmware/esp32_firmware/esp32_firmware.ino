@@ -82,13 +82,7 @@ bool telemetry_on = false;
 uint8_t telemetry_div = 0;
 
 
-CommandContext commandContext = {
-  controller, flashStorage, speedL, speedR,
-  KP_L, KI_L, KD_L, KP_R, KI_R, KD_R,
-  FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R,
-  REF_TAU_S, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF,
-  CTRL_MODE, telemetry_on, telemetry_div
-};
+
 
 // Скорости для отправки на Jetson: обновляются на каждом такте контура (100 Гц)
 float linear_vel_ = 0.0;
@@ -109,6 +103,16 @@ int pros;
 bool inaOk = true;
 bool pwmOk = true;
 bool oledOk = true;
+
+// Construct after all referenced hardware status flags have been declared.
+CommandContext commandContext = {
+  controller, flashStorage, speedL, speedR,
+  KP_L, KI_L, KD_L, KP_R, KI_R, KD_R,
+  FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R,
+  REF_TAU_S, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF,
+  CTRL_MODE, telemetry_on, telemetry_div,
+  accepted_commands, rejected_commands, watchdog_stop_count, inaOk, pwmOk
+};
 
 // счётчики ошибок подряд
 uint8_t inaErrors = 0;
@@ -497,14 +501,7 @@ void loop()
     }
 
     ++accepted_commands;
-    if (cmd.type == Command::REQUEST_INFO) {
-      deviceInfoPublish();
-    } else if (cmd.type == Command::REQUEST_DIAGNOSTICS) {
-      diagnosticSnapshotPublish(millis(), accepted_commands, rejected_commands,
-         watchdog_stop_count, controller.isStopped(), inaOk, pwmOk);
-    } else {
-      dispatchCommand(cmd, commandContext);
-    }
+    dispatchCommand(cmd, commandContext);
     mainReceiver.update();
   }
 

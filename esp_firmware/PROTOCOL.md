@@ -4,7 +4,7 @@ This is the sole protocol supported on the main ESP32 Serial <-> Jetson ROS 2 `s
 
 ## Framing
 
-ASCII: `$<id>;<arg1>;...;#` (optional CR/LF after `#`). `id` is an integer; fields are finite decimal numbers; `.` is the decimal point. Max input fields on ESP32: 6. Any malformed/unknown command is ignored. No ACK/NACK or checksum in this stage; do not assume a setting was applied because the serial write succeeded.
+ASCII: `$<id>;<arg1>;...;#` (optional CR/LF after `#`). `id` is an integer; fields are finite decimal numbers; `.` is the decimal point. Max input fields on ESP32: 7. Any malformed/unknown command is ignored. No checksum. ACK/NACK is supported only for transactional 210; legacy-style setting commands still have no confirmation.
 
 ## Jetson -> ESP32
 
@@ -59,3 +59,13 @@ There is NO hardware motor power disconnect/enable. Software stop sets a zero ta
 - `ACK/NACK` for setting commands is **not yet implemented**. Do not mistake successful parsing for successful NVS writes.
 
 Existing 101/103/202/301 IDs and payloads remain unchanged for hardware regression testing.
+
+## v2.2 transactional PID (RAM only)
+
+- `$501;#` → `$501;2;2;#` (protocol version).
+- `$211;request_id;#` → `$211;request_id;kpL;kiL;kdL;kpR;kiR;kdR;#`.
+- `$210;request_id;kpL;kiL;kdL;kpR;kiR;kdR;#` → `$502;request_id;210;#` after applying PID in RAM; or `$503;request_id;210;1;#` for values outside allowed bounds.
+- `request_id` is an exact integer from **1 to 65535** (ESP32 stores it as uint16). Error `1` means invalid PID coefficient: non-finite, negative, or >1000.
+- No Flash/NVS write in 210. Old 201/204 exist for now, but are **not transactional**. Do not use 204 in the safe suite.
+- Syntactically malformed frames or invalid request IDs cannot be reliably correlated, so they are silently rejected; this is a known limitation. The read-only 211 reply is correlated by request ID, but has no separate ACK. Do not retry mutation 210 automatically after a lost ACK until idempotency is defined; setting the same six gains is mathematically idempotent but could reset controller state.
+- Frames can be lost. A received ACK means PID setters ran, **not** that motors physically responded. A NACK does not modify gains. Neither constitutes a persistent-storage acknowledgement.

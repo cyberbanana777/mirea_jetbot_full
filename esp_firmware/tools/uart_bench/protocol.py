@@ -4,11 +4,11 @@ from dataclasses import dataclass
 
 MAX_FRAME_BYTES = 192
 IDS = {101:'twist',102:'wheel_targets',103:'stop',104:'open_loop',
-       201:'set_pid_ram',202:'pid',203:'adrc',204:'set_pid_nvs',
+       201:'set_pid_ram',202:'pid',210:'set_pid_transaction',211:'pid_transaction',203:'adrc',204:'set_pid_nvs',
        205:'feedforward',206:'query_config',207:'reference_filter',
        208:'control_mode',209:'query_adrc',301:'odometry',
-       401:'diagnostics',402:'diagnostic_snapshot',501:'device_info',403:'diagnostics_enable',404:'speed_window'}
-EXPECTED_RX_FIELDS = {301:7,202:6,203:6,205:4,207:1,401:7,402:7,501:2,404:2}
+       401:'diagnostics',402:'diagnostic_snapshot',501:'device_info',502:'ack',503:'nack',403:'diagnostics_enable',404:'speed_window'}
+EXPECTED_RX_FIELDS = {211:7,502:2,503:3,301:7,202:6,203:6,205:4,207:1,401:7,402:7,501:2,404:2}
 
 @dataclass(frozen=True)
 class Frame:

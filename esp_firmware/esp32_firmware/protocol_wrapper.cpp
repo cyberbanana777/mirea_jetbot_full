@@ -78,7 +78,7 @@ void speedWindowPublish(int min_edges, int align) {
 
 // Numeric-only frames maintain compatibility with the strict Python decoder.
 void deviceInfoPublish() {
-    static const char msg[] = "$501;2;1;#\r\n"; // major=2, minor=1
+    static const char msg[] = "$501;2;2;#\r\n"; // major=2, minor=1
     if (Serial.availableForWrite() >= (int)(sizeof(msg) - 1))
         Serial.write((const uint8_t*)msg, sizeof(msg) - 1);
 }
@@ -92,4 +92,22 @@ void diagnosticSnapshotPublish(uint32_t uptime_ms, uint32_t accepted, uint32_t r
       (unsigned long)watchdog_stops, motor_stopped ? 1U : 0U, ina_ok ? 1U : 0U, pwm_ok ? 1U : 0U);
     if (n > 0 && n < (int)sizeof(buf) && Serial.availableForWrite() >= n)
         Serial.write((const uint8_t*)buf, n);
+}
+
+void configAckPublish(uint16_t seq, uint16_t command) {
+    char buf[42];
+    int n = snprintf(buf, sizeof(buf), "$502;%u;%u;#\r\n", (unsigned)seq, (unsigned)command);
+    if (n > 0 && n < (int)sizeof(buf)) Serial.write((const uint8_t*)buf, n);
+}
+void configNackPublish(uint16_t seq, uint16_t command, uint8_t error) {
+    char buf[46];
+    int n = snprintf(buf, sizeof(buf), "$503;%u;%u;%u;#\r\n", (unsigned)seq, (unsigned)command, (unsigned)error);
+    if (n > 0 && n < (int)sizeof(buf)) Serial.write((const uint8_t*)buf, n);
+}
+void transactionalPidPublish(uint16_t seq, double kpL, double kiL, double kdL,
+                             double kpR, double kiR, double kdR) {
+    char buf[160];
+    int n = snprintf(buf, sizeof(buf), "$211;%u;%.5f;%.5f;%.5f;%.5f;%.5f;%.5f;#\r\n",
+        (unsigned)seq, kpL, kiL, kdL, kpR, kiR, kdR);
+    if (n > 0 && n < (int)sizeof(buf)) Serial.write((const uint8_t*)buf, n);
 }

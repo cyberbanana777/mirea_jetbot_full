@@ -146,6 +146,37 @@ void dispatchCommand(const ParsedCommand& cmd, CommandContext& ctx) {
       speedWindowPublish(ctx.speedL.minEdges(), ctx.speedL.alignQuad() ? 1 : 0);
       break;
 
+    case Command::REQUEST_PID_TX:
+      transactionalPidPublish((uint16_t)cmd.args[0],
+          ctx.KP_L, ctx.KI_L, ctx.KD_L, ctx.KP_R, ctx.KI_R, ctx.KD_R);
+      break;
+
+    case Command::SET_PID_TX: {
+      const uint16_t seq = (uint16_t)cmd.args[0];
+      if (!CommandPolicy::validTransactionalPid(cmd)) {
+        ++ctx.rejected_commands;
+        --ctx.accepted_commands;
+        configNackPublish(seq, 210, 1);
+      } else {
+        ctx.KP_L = cmd.args[1]; ctx.KI_L = cmd.args[2]; ctx.KD_L = cmd.args[3];
+        ctx.KP_R = cmd.args[4]; ctx.KI_R = cmd.args[5]; ctx.KD_R = cmd.args[6];
+        ctx.controller.setPID(ctx.KP_L, ctx.KI_L, ctx.KD_L,
+                              ctx.KP_R, ctx.KI_R, ctx.KD_R);
+        configAckPublish(seq, 210);
+      }
+      break;
+    }
+
+    case Command::REQUEST_INFO:
+      deviceInfoPublish();
+      break;
+
+    case Command::REQUEST_DIAGNOSTICS:
+      diagnosticSnapshotPublish(millis(), ctx.accepted_commands,
+          ctx.rejected_commands, ctx.watchdog_stop_count,
+          ctx.controller.isStopped(), ctx.inaOk, ctx.pwmOk);
+      break;
+
     case Command::UNKNOWN:
       break;
     }

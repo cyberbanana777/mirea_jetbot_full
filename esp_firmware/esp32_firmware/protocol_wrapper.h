@@ -3,8 +3,14 @@
 
 #include <Arduino.h>
 
-// Main UART grouped API v2.1; Serial1 has a separate protocol.
+// Main UART grouped API v2.2; Serial1 has a separate protocol.
 void deviceInfoPublish();
+// Transactional config: 502 ACK(seq,command_id), 503 NACK(seq,command_id,error).
+// 211 PID snapshot(seq, six gains). Error 1: invalid parameter.
+void configAckPublish(uint16_t seq, uint16_t command);
+void configNackPublish(uint16_t seq, uint16_t command, uint8_t error);
+void transactionalPidPublish(uint16_t seq, double kpL, double kiL, double kdL,
+                             double kpR, double kiR, double kdR);
 void diagnosticSnapshotPublish(uint32_t uptime_ms, uint32_t accepted, uint32_t rejected,
                                uint32_t watchdog_stops, bool motor_stopped,
                                bool ina_ok, bool pwm_ok);

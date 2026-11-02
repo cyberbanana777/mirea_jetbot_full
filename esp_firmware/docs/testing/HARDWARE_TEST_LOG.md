@@ -95,3 +95,11 @@ motor stop.
 `tools/uart_bench/hardware_suite.py` runs existing non-motion checks in one
 serial session and creates reports in `reports/`. Its result has not yet been
 measured on hardware.
+
+### v2.2.1 dispatch-only refactor — pending hardware validation
+
+- Reference baseline: API v2.2, UART suite 7/7 PASS (user report).
+- Changed: moved command IDs 210/211/402/501 from `.ino` into `command_dispatcher.cpp`.
+- Protocol and control math unchanged. New source-level dispatcher coverage test added.
+- Target firmware build: **NOT YET VERIFIED**.
+- Post-refactor hardware suite: **NOT YET RUN**.

@@ -13,6 +13,8 @@ Command decodeCommand(long id) {
     case 104: return Command::SET_DUTY;
     case 201: return Command::SET_PID_TEMP;
     case 202: return Command::REQUEST_PID;
+    case 210: return Command::SET_PID_TX;
+    case 211: return Command::REQUEST_PID_TX;
     case 203: return Command::SET_ADRC;
     case 204: return Command::SET_PID_FLASH;
     case 205: return Command::SET_FF;
@@ -46,7 +48,7 @@ ParsedCommand CommandParser::parse(const char* input) {
   parsed.type = type;
   while (*p != '#') {
     if (!*p) return invalid;
-    if (parsed.count >= 6 || *p == ';') return invalid;
+    if (parsed.count >= 7 || *p == ';') return invalid;
     errno = 0;
     const float value = strtof(p, &end);
     if (end == p || errno == ERANGE || !isfinite(value)) return invalid;

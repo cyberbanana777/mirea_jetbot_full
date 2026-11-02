@@ -14,3 +14,13 @@ class ProtocolTests(unittest.TestCase):
     def test_oversize(self):
         f=Framer();self.assertEqual(f.feed(b'$'+b'1'*300+b'#$202;#'),[b'$202;#']);self.assertEqual(f.overflow,1)
 if __name__=='__main__':unittest.main()
+
+
+class TransactionalProtocolTests(unittest.TestCase):
+    def test_transactional_pid_reply(self):
+        f=decode('$211;314;0.951;5.475;0;1.426;10.009;0;#')
+        self.assertEqual(f.id, 211)
+        self.assertEqual(len(f.fields), 7)
+    def test_ack_and_nack(self):
+        self.assertEqual(decode('$502;42;210;#').fields, (42.,210.))
+        self.assertEqual(decode('$503;42;210;1;#').fields, (42.,210.,1.))

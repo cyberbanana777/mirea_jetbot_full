@@ -27,13 +27,15 @@ enum class Command : uint8_t {
   SET_SPEED_WINDOW = 18, // окно оценки скорости
   STOP = 19,             // $103;#
   REQUEST_DIAGNOSTICS = 20, // $402;#
+  REQUEST_PID_TX = 22,  // $211;request_id;#
+  SET_PID_TX = 23, // $210;request_id;KpL;KiL;KdL;KpR;KiR;KdR;# (RAM only)
   REQUEST_INFO = 21         // $501;#
 
 };
 
 struct ParsedCommand {
   Command type = Command::UNKNOWN;
-  float args[6] = { 0 };  // максимум 6 аргументов (для PID)
+  float args[7] = { 0 };  // transactional PID needs request_id + 6 gains
   uint8_t count = 0;      // реальное количество полученных аргументов
 };
 
