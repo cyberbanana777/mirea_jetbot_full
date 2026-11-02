@@ -20,17 +20,14 @@ const uint8_t PIN_L_B = 33;  // Левое колесо, канал В
 // tools/steptest.py. Это заводские значения: они используются на пустом flash, а командами
 // $4 и $11 их можно переопределить без перепрошивки (значения хранятся в NVS).
 // Kd = 0: производная по зашумлённой скорости пользы не даёт.
-float KP_R = 1.426;
-float KI_R = 10.009;
-float KD_R = 0.0;
-
-float KP_L = 0.951;
-float KI_L = 5.475;
-float KD_L = 0.0;
-
+extern float KP_R;
+extern float KI_R;
+extern float KD_R;
+extern float KP_L;
+extern float KI_L;
+extern float KD_L;
 // Период контура скорости, мс (передаётся в uPID.setDt)
-float DT = 10;
-
+extern float DT;
 const double MAX_CONSTRUCTIVE_VELOCITY = 0.5; // м/сек
 
 // === Энкодер и оценка скорости (speed_estimator.h) ===
@@ -67,23 +64,21 @@ const float SPEED_FILTER_K = 1.0;
 // прирост скважности на 1 м/с. Значения откалиброваны на ПОЛУ (робот стоит на колёсах);
 // их же использует LADRC с ADRC_FF = 2. Калибровка в воздухе была: dz 0.1073 / 0.1114,
 // gain 0.5848 / 0.9133 - для работы с поднятыми колёсами вернуть командой $11.
-float FF_DEADZONE_L = 0.2992;
-float FF_DEADZONE_R = 0.3101;
-float FF_GAIN_L = 0.5151;
-float FF_GAIN_R = 0.8424;
-
+extern float FF_DEADZONE_L;
+extern float FF_DEADZONE_R;
+extern float FF_GAIN_L;
+extern float FF_GAIN_R;
 // Фильтр уставки скорости (одинаковый для обоих колёс), постоянная времени, с.
 // Оба колеса отрабатывают одну и ту же плавную траекторию: нет перерегулирования от ступеньки
 // и переходные процессы колёс совпадают. 0 - выключен. Меняется командой $14 без перепрошивки.
 // По умолчанию выключен: LADRC и так даёт отклик ~1/(s/wc + 1), а для Nav2 сглаживание
 // делает velocity_smoother.
-float REF_TAU_S = 0.0;
-
+extern float REF_TAU_S;
 // === Выбор регулятора и LADRC ===
 // CTRL_MODE: 0 - feedforward + ПИ (как раньше), 1 - LADRC. Меняется командой $15 без перепрошивки,
 // переключение на ходу безударное (скважность в момент переключения не скачет).
 // По умолчанию LADRC (настроен на полу 29.10.2026: steptest s_l9.csv).
-int CTRL_MODE = 1;
+extern int CTRL_MODE;
 // LADRC первого порядка: модель колеса dv/dt = b0*u + f, где f - всё неизвестное (инерция, трение,
 // мёртвая зона, нагрузка). Наблюдатель ESO оценивает v и f, закон u = (wc*(r - z1) - z2) / b0.
 // ADRC_WC  - полоса контура, рад/с: отклик на уставку ~ 1/(s/wc + 1), то есть lambda = 1/wc
@@ -101,12 +96,11 @@ int CTRL_MODE = 1;
 // Подобрано на полу (steptest, 29.10.2026): wc 9, wo 40 -> t90 ~280 мс на 1.2 об/с,
 // перерегулирование 5-8 %, набег курса за ступеньку < 0.1 град. (wc 5 / wo 25 медленнее,
 // wo 30 хуже синхронность колёс.)
-float ADRC_WC = 9.0;
-float ADRC_WO = 40.0;
-float ADRC_B0_L = 9.82;
-float ADRC_B0_R = 7.65;
-float ADRC_FF = 2.0;
-
+extern float ADRC_WC;
+extern float ADRC_WO;
+extern float ADRC_B0_L;
+extern float ADRC_B0_R;
+extern float ADRC_FF;
 // === Таймеры ===
 // Контур скорости: 100 Гц. Оценка скорости использует реальные метки времени
 // фронтов, поэтому джиттер такта на неё не влияет.

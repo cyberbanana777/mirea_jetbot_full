@@ -86,3 +86,64 @@ Offline regression: `python3 -m unittest discover -s tools/uart_bench -p 'test_*
 The new source-level dispatch coverage test checks enum/switch exhaustiveness,
 but is **not** a substitute for compiling for ESP32. Run the established safe
 `hardware_suite.py` after flashing, and confirm the previous 7/7 PASS baseline.
+
+## v2.2.2 — configuration and diagnostics services
+
+`CommandDispatcher` now routes configuration commands to `config_service.cpp` and
+version/health queries to `diagnostics_service.cpp`. The service bodies have been
+moved without changing their command logic, controller math, UART formats or
+storage semantics. Existing `CommandContext` is intentionally retained as the
+non-owning dependency bundle for this incremental refactor.
+
+No automatic ESP32 compile/build check or CI build job has been added, per the
+project workflow. Compile manually in Arduino IDE and run the established
+7-check safe UART suite after flashing. The offline Python unit tests are
+still available for protocol/source regressions.
+
+Known caveat: legacy configuration commands with optional `save` flags still
+write to NVS when explicitly requested; the **safe bench suite never sends
+such commands**. Do not change parameters during this regression check.
+
+## v2.2.3 — service context boundaries
+
+`CommandContext` is now a lightweight aggregate of `MotionContext`,
+`ConfigContext`, and `DiagnosticsContext`. Each service receives only its
+relevant non-owning references. UART protocol 2.2, control algorithms, NVS
+behavior, and the safe UART test suite are unchanged.
+
+This release intentionally **does not** add automatic ESP32 compilation.
+Run the normal manual Arduino build and then `tools/uart_bench/hardware_suite.py`
+on real hardware. Python unit tests do not prove the ESP32 build succeeds.
+
+## v2.2.4 — UART service and scheduling boundaries
+
+`serial_service.h/.cpp` now owns main-UART frame dispatch and the separate
+Serial1 Wi-Fi-display frame handoff. It keeps the original order: poll both
+receivers, evaluate safety, run control and odometry, then process up to four
+main frames and one secondary frame. No command IDs or response formats changed.
+
+`control_scheduler.h` contains the existing due-time decisions for the 100 Hz
+control loop, 50 Hz odometry, and I2C window. It does **not** introduce new
+threads, change periods, or catch up missed control cycles. The actual control
+and odometry work remain in `esp32_firmware.ino` for this increment.
+
+Manual Arduino compile and flashing are required; no automatic firmware build
+was added. Re-run `hardware_suite.py` on the actual ESP32 (7/7 expected).
+Treat the firmware as unvalidated until that test is confirmed.
+
+## v2.2.4 linker build-fix
+
+`serial_service.cpp` no longer includes `config.h`, which contains global variable definitions. The minimum battery voltage is passed as a value through `SerialServiceContext`. This avoids duplicate definitions at link time without changing protocol or control logic. Target-board compilation and hardware validation remain to be completed.
+
+## v2.2.5 — single ownership of mutable configuration
+
+`config.h` now declares 18 mutable runtime parameters via `extern`; their
+existing exact default values are defined once in `esp32_firmware/config.cpp`.
+Compile and link `config.cpp` alongside the sketch (Arduino IDE automatically
+compiles `.cpp` files next to the `.ino`). Physical constants and timers stay
+in `config.h`. NVS loading and runtime writes still target the same variables.
+No UART API, controller, scheduler, or storage logic changes.
+
+No automatic ESP32 build was added. Compile/flash manually and run the existing
+7-case safe UART suite. The included Python test checks source declarations,
+not the target toolchain/linker.
