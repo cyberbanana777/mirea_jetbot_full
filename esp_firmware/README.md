@@ -157,3 +157,7 @@ UART polling, watchdog, command processing, and I2C ordering. Mutable
 configuration remains in `config.cpp`; no firmware auto-build was introduced.
 Manual board compilation and the same seven safe UART tests are required
 before tagging this version.
+
+### v2.2.7 HardwareMonitor
+
+Extracted the existing INA219 sample and I2C device monitoring into `hardware_monitor.h/.cpp`. The main loop still gates these operations on the same scheduler window and interval and preserves the order relative to the display and safety handling. Original reinitialization logic and error thresholds remain unchanged. Manual ESP32 compile and safe UART bench are required before tagging. No automatic build validation is added.

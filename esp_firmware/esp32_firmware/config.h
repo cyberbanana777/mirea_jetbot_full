@@ -1,7 +1,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
-#include <stdint.h>
 
+#include <stdint.h>  // uint8_t, uint32_t, int32_t; usable from standalone .cpp files
 //Константы физических параметров
 const float Pi = 3.14159;
 const float WHEEL_BASE = 0.117;  // длина базы

@@ -32,6 +32,7 @@ const char *VERSION = "2.4.0";
 #include "control_scheduler.h"
 #include "serial_service.h"
 #include "control_loop_service.h"
+#include "hardware_monitor.h"
 
 Encoders encoders;
 ErrorManager error_manager;
@@ -135,112 +136,14 @@ const uint8_t MAX_I2C_ERRORS = 0; // после скольких ошибок и
 unsigned long lastI2CCheck = 0;
 const unsigned long I2C_CHECK_INTERVAL = 500; // 0.5 секунды
 
-void checkI2CDevices()
-{
-  bool reinitDone = false; // после переинициализации Wire.begin() мог сбросить частоту шины
+HardwareMonitorContext hardwareMonitorContext = {
+  INA, controller, display, inaOk, pwmOk, oledOk,
+  inaErrors, pwmErrors, oledErrors,
+  bus_voltage, shunt_v, current, pros,
+  min_voltage, max_voltage, MAX_I2C_ERRORS, I2C_CLOCK_HZ, VERSION, i2cProbe
+};
+HardwareMonitor hardwareMonitor(hardwareMonitorContext);
 
-  // -------- INA219 (0x41) --------
-  bool inaResponds = i2cProbe(0x41);
-  if (inaResponds)
-  {
-    if (!inaOk)
-    {
-      // Устройство вернулось без переинициализации (редко, но бывает)
-      inaOk = true;
-      inaErrors = 0;
-    }
-  }
-  else
-  {
-    inaErrors++;
-    if (inaErrors >= MAX_I2C_ERRORS)
-    {
-      inaOk = false;
-      // Попытка переинициализации
-      if (INA.begin())
-      {
-        inaOk = true;
-        inaErrors = 0;
-        reinitDone = true;
-        Serial.println("INA219 reinitialized");
-      }
-      else
-      {
-        Serial.println("INA219 reinit failed");
-        // Оставляем inaOk=false, счётчик сбросим после успеха
-        inaErrors = MAX_I2C_ERRORS; // не копить бесконечно
-      }
-    }
-  }
-
-  // -------- PCA9685 (0x60) --------
-  bool pwmResponds = i2cProbe(0x60);
-  if (pwmResponds)
-  {
-    if (!pwmOk)
-    {
-      pwmOk = true;
-      pwmErrors = 0;
-    }
-  }
-  else
-  {
-    pwmErrors++;
-    if (pwmErrors >= MAX_I2C_ERRORS)
-    {
-      pwmOk = false;
-      if (controller.reinitializePWM())
-      {
-        pwmOk = true;
-        pwmErrors = 0;
-        reinitDone = true;
-        // Восстанавливаем управление моторами
-        controller.emergencyStop();
-        // Но update() заново рассчитает ПИД и запишет моторы, что нам и нужно
-        Serial.println("PCA9685 reinitialized");
-      }
-      else
-      {
-        Serial.println("PCA9685 reinit failed");
-        pwmErrors = MAX_I2C_ERRORS;
-      }
-    }
-  }
-
-  // -------- OLED (0x3C) --------
-  bool oledResponds = i2cProbe(0x3C);
-  if (oledResponds)
-  {
-    if (!oledOk)
-    {
-      oledOk = true;
-      oledErrors = 0;
-    }
-  }
-  else
-  {
-    oledErrors++;
-    if (oledErrors >= MAX_I2C_ERRORS)
-    {
-      oledOk = false;
-      if (display.reinitialize((char *)VERSION))
-      {
-        oledOk = true;
-        oledErrors = 0;
-        reinitDone = true;
-        Serial.println("OLED reinitialized");
-      }
-      else
-      {
-        Serial.println("OLED reinit failed");
-        oledErrors = MAX_I2C_ERRORS;
-      }
-    }
-  }
-
-  if (reinitDone)
-    Wire.setClock(I2C_CLOCK_HZ);
-}
 
 void parseJetsonMessage(const char *fullMessage)
 {
@@ -401,17 +304,13 @@ void loop()
   if ((millis() - update_timer >= update_voltage_timer_timeout) && inaOk && i2cWindowOpen())
   {
     update_timer = millis();
-    // Чтение напряжения и тока
-    bus_voltage = INA.getBusVoltage();
-    shunt_v = INA.getShuntVoltage_mV();
-    pros = (bus_voltage - min_voltage) / (max_voltage - min_voltage) * 100;
-    current = shunt_v / 0.1 / 1000;
+    hardwareMonitor.samplePower();
   }
   // Мониторинг устройств I2C (не чаще 2 секунд)
   if ((millis() - lastI2CCheck >= I2C_CHECK_INTERVAL) && i2cWindowOpen())
   {
     lastI2CCheck = millis();
-    checkI2CDevices();
+    hardwareMonitor.checkI2CDevices();
   }
 
   // Обновление дисплея (само проверяет интервал; кадр уходит по кускам, когда шина свободна)
