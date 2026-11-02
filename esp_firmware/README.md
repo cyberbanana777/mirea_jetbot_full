@@ -166,3 +166,12 @@ Extracted the existing INA219 sample and I2C device monitoring into `hardware_mo
 ### v2.2.8: SafetyManager extraction
 
 The unchanged watchdog/STOP decision block is now in `safety_manager.h/.cpp`, with non-owning references to the existing motion-command timer, latch, counter and telemetry flag. `SerialService` continues to refresh the same timer and clear the same latch. `loop()` invokes `safetyManager.check()` at exactly the previous location, immediately after UART polling. UART protocol, controller, I2C, PWM and control periods remain unchanged. Manual ESP32 build and safe hardware UART suite are required before tagging.
+
+### v2.2.9 — startup service extraction
+
+`StartupService` now contains the original `setup()` sequence. It receives non-owning references
+to hardware objects and timing state. The sketch retains only the composition root, `setup()`
+delegation and the existing `loop()`. No NVS, PID/LADRC, UART, or safety semantics are changed.
+
+Build and flash manually with Arduino IDE, then run the safe hardware suite. No automated
+ESP32 firmware compilation is part of this repository's checks.

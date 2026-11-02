@@ -34,6 +34,7 @@ const char *VERSION = "2.4.0";
 #include "control_loop_service.h"
 #include "hardware_monitor.h"
 #include "safety_manager.h"
+#include "startup_service.h"
 
 Encoders encoders;
 ErrorManager error_manager;
@@ -194,6 +195,15 @@ SafetyManagerContext safetyManagerContext = {
 };
 SafetyManager safetyManager(safetyManagerContext);
 
+// Startup takes references to the existing application-owned hardware and timers.
+StartupContext startupContext = {
+  error_manager, encoders, controller, INA, display, flashStorage,
+  emergency_timer, speedL, speedR, odom_tmr, control_next_us,
+  VERSION, i2cProbe
+};
+StartupService startupService(startupContext);
+
+
 /**
 * @brief Преобразет тики в частоту вращения (об/с)
 * @param ticks - счётчик тактов из прерываний
@@ -210,64 +220,7 @@ bool i2cWindowOpen()
 
 void setup()
 {
-
-  // Светодиод ошибок настраиваем и гасим первым делом
-  error_manager.begin(ERROR_LED_PIN);
-
-  Serial.begin(115200);
-  Serial1.begin(115200);
-
-  error_manager.check_exec(Wire.begin(), "Error! Failed to init I2C bus.");
-  Wire.setTimeOut(50); // 50 мс таймаут на транзакцию
-  Wire.setClock(I2C_CLOCK_HZ);
-
-  error_manager.soft_check_exec(i2cProbe(0x3C), "Warning! OLED-display is unaviable through I2C bus");
-  error_manager.soft_check_exec(i2cProbe(0x41), "Warning! INA219 sensor is unaviable through I2C bus");
-  error_manager.soft_check_exec(i2cProbe(0x60), "Warning! PWM-controller is unaviable through I2C bus");
-
-  error_manager.check_exec(encoders.begin(PIN_R_A, PIN_R_B, PIN_L_A, PIN_L_B), "Error! Failed to init encoders");
-  error_manager.check_exec(controller.begin(), "Error! Failed to init motor controller");
-
-  error_manager.check_exec(INA.begin(), "Error! Failed to init INA219 module.");
-
-  error_manager.check_exec(display.begin((char *)VERSION), "Error! OLED init failed.");
-  Wire.setClock(I2C_CLOCK_HZ); // display.begin() вызывает Wire.begin() ещё раз
-
-  delay(100);
-
-  error_manager.check_exec(flashStorage.begin(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R), "Error! NVS init failed.");
-  const float defaults[6] = {KP_L, KI_L, KD_L, KP_R, KI_R, KD_R};
-  flashStorage.loadPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
-  if (!CommandPolicy::validPid(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R)) {
-    KP_L = defaults[0]; KI_L = defaults[1]; KD_L = defaults[2];
-    KP_R = defaults[3]; KI_R = defaults[4]; KD_R = defaults[5];
-  }
-  controller.setPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
-
-  // Feedforward: значения из config.h, если калибровка ещё не сохранялась во flash
-  flashStorage.loadFF(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
-  controller.setFeedforward(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
-
-  // Фильтр уставки: значение из config.h, если не менялось командой $14 с сохранением
-  flashStorage.loadRefTau(REF_TAU_S);
-  controller.setRefFilter(REF_TAU_S);
-
-  // Регулятор (ПИ или LADRC) и параметры LADRC: значения из config.h, если не сохранялись ($15/$16)
-  flashStorage.loadAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF);
-  ADRC_FF = constrain(roundf(ADRC_FF), 0.0f, 2.0f);
-  controller.setAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (uint8_t)ADRC_FF);
-  flashStorage.loadCtrlMode(CTRL_MODE);
-  controller.setControlMode(CTRL_MODE == 1 ? ControlMode::kLadrc : ControlMode::kPi);
-
-  controller.emergencyStop();
-
-  emergency_timer = millis();
-  // Отсчёт одометрии и контура скорости с конца инициализации, а не с включения питания
-  encoders.reset();
-  speedL.reset();
-  speedR.reset();
-  odom_tmr = micros();
-  control_next_us = micros() + CONTROL_PERIOD_US;
+  startupService.begin();
 }
 
 void loop()
