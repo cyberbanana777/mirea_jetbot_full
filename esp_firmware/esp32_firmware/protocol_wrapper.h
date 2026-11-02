@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 
+// Outbound protocol is legacy v1 by default. v2 uses grouped IDs (3xx/4xx/2xx).
+
 // mmsg type = 1
 void odomPublish (
   double x_pos_,

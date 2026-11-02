@@ -55,6 +55,7 @@ bool MotorController::begin() {
 
   _lastDir[0] = 2;
   _lastDir[1] = 2;
+  emergencyStop(); // Explicit zero output after PCA9685 initialization.
   return true;
 }
 
@@ -65,9 +66,33 @@ bool MotorController::reinitializePWM() {
     // После сброса PCA9685 все каналы выключены, так что безопасно
     _lastDir[0] = 2;  // состояние каналов неизвестно: следующая запись выключит обе стороны моста
     _lastDir[1] = 2;
+    emergencyStop();
     return true;
 }
+void MotorController::emergencyStop() {
+  _stopped = true;
+  _openLoop = false;
+  _openDutyL = _openDutyR = 0.0f;
+  _targetLeft = _targetRight = 0.0f;
+  _outputLeft = _outputRight = 0.0f;
+  _pidL.setpoint = _pidR.setpoint = 0.0f;
+  _pidL.integral = _pidR.integral = 0.0f;
+  _refL = _refR = _tgtPrevL = _tgtPrevR = 0.0f;
+  _frozenL = _frozenR = 0;
+  _prevSignL = _prevSignR = 0;
+  _esoL = Eso();
+  _esoR = Eso();
+  // Always write all four pins, even if the direction cache says 'zero'.
+  // This also clears any stale output after a PCA9685 reinitialization.
+  _pwm.setPin(_leftChannel, 0, false);
+  _pwm.setPin(_leftChannel + 1, 0, false);
+  _pwm.setPin(_rightChannel, 0, false);
+  _pwm.setPin(_rightChannel + 1, 0, false);
+  _lastDir[0] = _lastDir[1] = 0;
+}
+
 void MotorController::setTargetVelocity(float linear, float angular) {
+  _stopped = false;
   // Дифференциальный привод
   float rawLeft = linear - angular * _wheelBase / 2.0f;   // м/с
   float rawRight = linear + angular * _wheelBase / 2.0f;  // м/с
@@ -83,6 +108,7 @@ void MotorController::setTargetVelocity(float linear, float angular) {
 
 
 void MotorController::setWheelSpeeds(float left, float right) {
+  _stopped = false;
   const float limit = _maxWheelSpeed * 0.8f;
   // Образка максимальной скорости
   _targetLeft = _cutValue(-limit, limit, left);
@@ -92,6 +118,7 @@ void MotorController::setWheelSpeeds(float left, float right) {
 }
 
 void MotorController::setOpenLoop(float dutyLeft, float dutyRight) {
+  _stopped = false;
   _openDutyL = _cutValue(-1.0f, 1.0f, dutyLeft);
   _openDutyR = _cutValue(-1.0f, 1.0f, dutyRight);
   // Регуляторы выключены: уставки и интеграторы обнуляем, чтобы при возврате
@@ -307,6 +334,10 @@ void MotorController::setAdrc(float wc, float wo, float b0L, float b0R, uint8_t 
 void MotorController::update(float currentLeftSpeed, float currentRightSpeed) {
   _measLeft = currentLeftSpeed;
   _measRight = currentRightSpeed;
+  if (_stopped) {
+    _outputLeft = _outputRight = 0.0f;
+    return; // STOP writes zeros immediately; do not run controller until new motion command.
+  }
 
   if (_openLoop) {
     _outputLeft = _openDutyL;

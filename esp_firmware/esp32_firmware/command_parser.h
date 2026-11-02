@@ -24,7 +24,9 @@ enum class Command : uint8_t {
   SET_ADRC = 16,         // $16;wc;wo;b0_L;b0_R;ff;save#  параметры LADRC (ff: 0 нет, 1 мёртвая зона, 2 полный FF)
   REQUEST_ADRC = 17,     // $17;#                 запросить регулятор и параметры LADRC ($7)
   // --- Отладка ---
-  SET_SPEED_WINDOW = 18  // $18;n;align#          окно оценки скорости: минимум фронтов (1..8), align 1 - целые метки; до перезагрузки; $18;# - запрос. Ответ $8
+  SET_SPEED_WINDOW = 18, // окно оценки скорости
+  STOP = 19              // $103;#
+
 };
 
 struct ParsedCommand {

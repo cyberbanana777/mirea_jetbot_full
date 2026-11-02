@@ -26,6 +26,9 @@ const char *VERSION = "2.4.0";
 #include "serial_receiver.h"
 #include "odometry.h"
 #include "speed_estimator.h"
+#include "command_policy.h"
+#include "command_dispatcher.h"
+#include "safety_policy.h"
 
 Encoders encoders;
 ErrorManager error_manager;
@@ -57,7 +60,7 @@ bool i2cProbe(uint8_t address)
 // Для таймеров
 unsigned long odom_tmr = 0;   // момент последнего расчёта одометрии, мкс
 unsigned long control_next_us = 0; // момент следующего такта контура скорости, мкс
-unsigned long emergency_timer = 0;
+unsigned long emergency_timer = 0; // last accepted motion command only
 uint64_t update_timer;
 
 // Одометрия (50 Гц): считается по тикам энкодеров, как и раньше
@@ -74,6 +77,15 @@ MTSpeedEstimator speedL(SPEED_PARAMS);
 bool telemetry_on = false;
 uint8_t telemetry_div = 0;
 
+
+CommandContext commandContext = {
+  controller, flashStorage, speedL, speedR,
+  KP_L, KI_L, KD_L, KP_R, KI_R, KD_R,
+  FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R,
+  REF_TAU_S, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF,
+  CTRL_MODE, telemetry_on, telemetry_div
+};
+
 // Скорости для отправки на Jetson: обновляются на каждом такте контура (100 Гц)
 float linear_vel_ = 0.0;
 float angular_vel_ = 0.0;
@@ -86,7 +98,7 @@ String wifi_ssid = "";
 String wifi_password = "";
 String wifi_ip = "";
 
-float bus_voltage, shunt_v, current;
+float bus_voltage = 0.0f, shunt_v = 0.0f, current = 0.0f;
 int pros;
 
 // состояние устройств
@@ -163,7 +175,7 @@ void checkI2CDevices()
         pwmErrors = 0;
         reinitDone = true;
         // Восстанавливаем управление моторами
-        controller.setTargetVelocity(0.0, 0.0);
+        controller.emergencyStop();
         // Но update() заново рассчитает ПИД и запишет моторы, что нам и нужно
         Serial.println("PCA9685 reinitialized");
       }
@@ -233,7 +245,7 @@ void parseJetsonMessage(const char *fullMessage)
     parts[count++] = token;
     token = strtok(nullptr, ";");
   }
-  if (count >= 4)
+  if (count >= 4 && strcmp(parts[0], "6") == 0)
   {
     wifi_ssid = parts[1];
     wifi_password = parts[2];
@@ -361,7 +373,12 @@ void setup()
   delay(100);
 
   error_manager.check_exec(flashStorage.begin(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R), "Error! NVS init failed.");
+  const float defaults[6] = {KP_L, KI_L, KD_L, KP_R, KI_R, KD_R};
   flashStorage.loadPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
+  if (!CommandPolicy::validPid(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R)) {
+    KP_L = defaults[0]; KI_L = defaults[1]; KD_L = defaults[2];
+    KP_R = defaults[3]; KI_R = defaults[4]; KD_R = defaults[5];
+  }
   controller.setPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
 
   // Feedforward: значения из config.h, если калибровка ещё не сохранялась во flash
@@ -379,7 +396,7 @@ void setup()
   flashStorage.loadCtrlMode(CTRL_MODE);
   controller.setControlMode(CTRL_MODE == 1 ? ControlMode::kLadrc : ControlMode::kPi);
 
-  controller.setWheelSpeeds(0.0, 0.0);
+  controller.emergencyStop();
 
   emergency_timer = millis();
   // Отсчёт одометрии и контура скорости с конца инициализации, а не с включения питания
@@ -398,10 +415,9 @@ void loop()
   jetsonReceiver.update();
 
   const bool host_silent = (millis() - emergency_timer > emergency_timer_timeout);
-  if (host_silent || (bus_voltage < min_voltage))
-  {
-    // Аварийная остановка (возвращает и замкнутый режим, если шёл эксперимент $10)
-    controller.setWheelSpeeds(0.0, 0.0);
+  if (SafetyPolicy::mustStop(host_silent, inaOk, pwmOk, bus_voltage, min_voltage) &&
+      !controller.isStopped()) {
+    controller.emergencyStop();
   }
   if (host_silent)
   {
@@ -449,151 +465,28 @@ void loop()
   }
 
   // Обработка входного значения
-  if (mainReceiver.available())
+  for (uint8_t frames = 0; frames < 4 && mainReceiver.available(); ++frames)
   {
-    emergency_timer = millis();
     const char *raw_0 = mainReceiver.getMessage(); // теперь это C-строка
     ParsedCommand cmd = CommandParser::parse(raw_0);
-
-    switch (cmd.type)
-    {
-    case Command::SET_TWIST:
-      if (cmd.count >= 2)
-        controller.setTargetVelocity(cmd.args[0], cmd.args[1]);
-      break;
-
-    case Command::SET_WHEEL_SPEEDS:
-      if (cmd.count >= 2)
-        controller.setWheelSpeeds(cmd.args[0], cmd.args[1]);
-      break;
-
-    case Command::SET_PID_TEMP:
-      if (cmd.count >= 6)
-      {
-        KP_L = cmd.args[0];
-        KI_L = cmd.args[1];
-        KD_L = cmd.args[2];
-        KP_R = cmd.args[3];
-        KI_R = cmd.args[4];
-        KD_R = cmd.args[5];
-        controller.setPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
-      }
-      break;
-
-    case Command::SET_PID_FLASH:
-      if (cmd.count >= 6)
-      {
-        KP_L = cmd.args[0];
-        KI_L = cmd.args[1];
-        KD_L = cmd.args[2];
-        KP_R = cmd.args[3];
-        KI_R = cmd.args[4];
-        KD_R = cmd.args[5];
-        controller.setPID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
-        flashStorage.savePID(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
-      }
-      break;
-
-    case Command::REQUEST_PID:
-      regulatorsCoefficientsPublish(KP_L, KI_L, KD_L, KP_R, KI_R, KD_R);
-      break;
-
-    case Command::SET_DUTY:
-      // Разомкнутый режим для калибровки: шлите не реже раза в секунду,
-      // иначе сработает аварийная остановка
-      if (cmd.count >= 2 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]))
-        controller.setOpenLoop(cmd.args[0], cmd.args[1]);
-      break;
-
-    case Command::SET_FF:
-      if (cmd.count >= 4 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]) &&
-          isfinite(cmd.args[2]) && isfinite(cmd.args[3]))
-      {
-        FF_GAIN_L = constrain(cmd.args[0], 0.0f, 20.0f);
-        FF_DEADZONE_L = constrain(cmd.args[1], 0.0f, 0.9f);
-        FF_GAIN_R = constrain(cmd.args[2], 0.0f, 20.0f);
-        FF_DEADZONE_R = constrain(cmd.args[3], 0.0f, 0.9f);
-        controller.setFeedforward(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
-        if (cmd.count >= 5 && cmd.args[4] >= 0.5f)
-          flashStorage.saveFF(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
-      }
-      break;
-
-    case Command::SET_TELEMETRY:
-      if (cmd.count >= 1)
-      {
-        telemetry_on = (cmd.args[0] >= 0.5f);
-        telemetry_div = 0;
-      }
-      break;
-
-    case Command::REQUEST_FF:
-      feedforwardPublish(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
-      refFilterPublish(REF_TAU_S);
-      adrcPublish(CTRL_MODE, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (int)ADRC_FF);
-      break;
-
-    case Command::SET_REF_FILTER:
-      if (cmd.count >= 1 && isfinite(cmd.args[0]))
-      {
-        REF_TAU_S = constrain(cmd.args[0], 0.0f, 2.0f);
-        controller.setRefFilter(REF_TAU_S);
-        if (cmd.count >= 2 && cmd.args[1] >= 0.5f)
-          flashStorage.saveRefTau(REF_TAU_S);
-      }
-      break;
-
-    case Command::SET_CTRL_MODE:
-      // $15;mode;save#  0 - ПИ, 1 - LADRC. Переключение безударное, можно на ходу
-      if (cmd.count >= 1 && isfinite(cmd.args[0]))
-      {
-        CTRL_MODE = (cmd.args[0] >= 0.5f) ? 1 : 0;
-        controller.setControlMode(CTRL_MODE == 1 ? ControlMode::kLadrc : ControlMode::kPi);
-        if (cmd.count >= 2 && cmd.args[1] >= 0.5f)
-          flashStorage.saveCtrlMode(CTRL_MODE);
-      }
-      break;
-
-    case Command::SET_ADRC:
-      // $16;wc;wo;b0_L;b0_R;ff;save#  ff: 0 - без прямой подачи, 1 - мёртвая зона, 2 - полный FF (ff и save необязательны, по умолчанию 0)
-      if (cmd.count >= 4 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]) &&
-          isfinite(cmd.args[2]) && isfinite(cmd.args[3]))
-      {
-        ADRC_WC = constrain(cmd.args[0], 0.5f, 50.0f);
-        ADRC_WO = constrain(cmd.args[1], 1.0f, 100.0f);   // wo*dt <= 1 при 10 мс (рекомендуется <= 0.5)
-        ADRC_B0_L = constrain(cmd.args[2], 0.5f, 200.0f);
-        ADRC_B0_R = constrain(cmd.args[3], 0.5f, 200.0f);
-        ADRC_FF = (cmd.count >= 5 && isfinite(cmd.args[4])) ? constrain(roundf(cmd.args[4]), 0.0f, 2.0f) : 0.0f;
-        controller.setAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (uint8_t)ADRC_FF);
-        if (cmd.count >= 6 && cmd.args[5] >= 0.5f)
-          flashStorage.saveAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF);
-      }
-      break;
-
-    case Command::REQUEST_ADRC:
-      adrcPublish(CTRL_MODE, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (int)ADRC_FF);
-      break;
-
-    case Command::SET_SPEED_WINDOW:
-      // $18;n;align#  окно оценки скорости (отладка шума, tools/noisetest.py), не сохраняется;
-      // n - минимум фронтов (1..8), align - 1: окно из целых меток, 0: как раньше. $18;# - запрос
-      if (cmd.count >= 1 && isfinite(cmd.args[0]))
-      {
-        const int32_t n = constrain((int32_t)lroundf(cmd.args[0]), (int32_t)1, (int32_t)8);
-        speedL.setMinEdges(n);
-        speedR.setMinEdges(n);
-      }
-      if (cmd.count >= 2 && isfinite(cmd.args[1]))
-      {
-        speedL.setAlignQuad(cmd.args[1] >= 0.5f);
-        speedR.setAlignQuad(cmd.args[1] >= 0.5f);
-      }
-      speedWindowPublish(speedL.minEdges(), speedL.alignQuad() ? 1 : 0);
-      break;
-
-    case Command::UNKNOWN:
-      break;
+    // A malformed frame or a configuration query must not keep motors alive.
+    // Validate count and command family before refreshing the motion watchdog.
+    if (!CommandPolicy::validShape(cmd)) {
+      mainReceiver.update();
+      continue;
     }
+    if (CommandPolicy::refreshesMotionWatchdog(cmd.type)) {
+      // Never arm motors during a detected peripheral/voltage fault.
+      if (SafetyPolicy::mustStop(false, inaOk, pwmOk, bus_voltage, min_voltage) ||
+          !CommandPolicy::validMotionValues(cmd)) {
+        mainReceiver.update();
+        continue;
+      }
+      emergency_timer = millis();
+    }
+
+    dispatchCommand(cmd, commandContext);
+    mainReceiver.update();
   }
 
   // Сообщение от Jetson с информацией о его сети (для OLED-дисплея)
@@ -601,6 +494,7 @@ void loop()
   {
     const char *raw_1 = jetsonReceiver.getMessage();
     parseJetsonMessage(raw_1);
+    jetsonReceiver.update();
   }
 
   // Медленные операции I2C - только в свободном окне между тактами контура

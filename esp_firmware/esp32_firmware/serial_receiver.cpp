@@ -12,6 +12,7 @@ SerialReceiver::SerialReceiver(Stream &stream, char startChar, char endChar)
 }
 
 void SerialReceiver::update() {
+    if (_complete) return; // consumer must take the completed frame first
     while (_stream.available()) {
         char c = _stream.read();
 
@@ -29,6 +30,7 @@ void SerialReceiver::update() {
                     _buffer[_index] = '\0';  // завершаем строку
                     _receiving = false;
                     _complete = true;
+                    return; // leave subsequent frames in UART for the next call
                 }
             } else {
                 // Переполнение буфера – сбрасываем приём
@@ -60,6 +62,7 @@ void SerialReceiver::reset() {
 }
 
 void SerialReceiver::copyMessage(char* dest, size_t maxLen) const {
+    if (!dest || maxLen == 0) return;
     if (_complete) {
         strncpy(dest, _buffer, maxLen);
         dest[maxLen - 1] = '\0';

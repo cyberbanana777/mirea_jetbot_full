@@ -38,6 +38,11 @@ public:
 
     bool reinitializePWM();
 
+    // Software stop: reset control state and explicitly write 0 to both H-bridge channels.
+    // Does NOT provide a hardware safety guarantee if MCU/I2C/PCA9685 is faulty.
+    void emergencyStop();
+    bool isStopped() const { return _stopped; }
+
     // Установка целевой скорости робота (линейная, угловая)
     void setTargetVelocity(float linear, float angular);
 
@@ -118,6 +123,7 @@ public:
     float getOutputRight() const { return _outputRight; }
 
 private:
+    bool _stopped = true;
     Adafruit_PWMServoDriver _pwm;
     uPID _pidL, _pidR;
 

@@ -1,0 +1,57 @@
+{
+  "timestamp_utc": "20261102T220322Z",
+  "port": "/dev/ttyUSB0",
+  "baud": 115200,
+  "duration_per_phase_s": 2.5,
+  "results": {
+    "UART-ODOM-001": {
+      "status": "PASS",
+      "metrics": {
+        "frames": 142,
+        "rate_hz": 55.705,
+        "max_host_gap_ms": 50.75,
+        "decode_errors": 0,
+        "overflow": 0
+      }
+    },
+    "UART-CONFIG-001": {
+      "status": "PASS",
+      "pid": [
+        0.951,
+        5.475,
+        0.0,
+        1.426,
+        10.009,
+        0.0
+      ]
+    },
+    "UART-PARSER-001": {
+      "status": "PASS",
+      "metrics": {
+        "frames": 155,
+        "rate_hz": 60.955,
+        "max_host_gap_ms": 50.67,
+        "decode_errors": 0,
+        "overflow": 0
+      },
+      "pid_unchanged": true
+    },
+    "MOTOR-SAFETY-001-UART": {
+      "status": "PASS",
+      "metrics": {
+        "frames": 126,
+        "rate_hz": 50.502,
+        "max_host_gap_ms": 50.62,
+        "decode_errors": 0,
+        "overflow": 0
+      },
+      "pid_unchanged": true,
+      "note": "Does NOT verify physical stop or PCA9685 output"
+    }
+  },
+  "limitations": [
+    "No physical PWM measurement",
+    "Host receive timestamps do not measure ESP32 scheduler jitter",
+    "No NVS writing or motor movement"
+  ]
+}
