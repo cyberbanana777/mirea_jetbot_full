@@ -19,9 +19,11 @@ class FakeClient:
         self.sent = []
     def send(self, msg_id): self.sent.append(msg_id)
     def receive(self, seconds):
-        if self.sent and self.sent[-1] == 202:
-            self.sent.pop()
-            yield Frame(202, (0.951,5.475,0.,1.426,10.009,0.), '$202;...;#')
+        if self.sent and self.sent[-1] in (202, 402, 501):
+            msg_id = self.sent.pop()
+            payload = {202:(0.951,5.475,0.,1.426,10.009,0.),
+                       402:(1200.,3.,0.,1.,1.,1.,1.),501:(2.,1.)}[msg_id]
+            yield Frame(msg_id, payload, f'${msg_id};...;#')
         else:
             for i in range(12):
                 yield Frame(301, (0.,)*7, '$301;...;#')

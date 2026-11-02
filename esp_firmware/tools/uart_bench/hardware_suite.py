@@ -12,7 +12,7 @@ from pathlib import Path
 from client import Client
 
 # Only permitted outbound IDs: STOP and read-only PID request.
-ALLOWED_TX_IDS = {103, 202}
+ALLOWED_TX_IDS = {103, 202, 402, 501}
 MALFORMED = [
     ('unknown_id', b'$999;#'),
     ('non_numeric_id', b'$abc;#'),
@@ -58,8 +58,20 @@ def pid_query(dev, timeout):
     return None
 
 
+def query_frame(dev, request_id, expected_fields, timeout=2.0):
+    send(dev, request_id)
+    for frame in dev.receive(timeout):
+        if frame.id == request_id and len(frame.fields) == expected_fields:
+            return list(frame.fields)
+    return None
+
+
 def run_suite(dev, duration, rows, malformed=True):
     results = {}
+    info = query_frame(dev, 501, 2)
+    results['UART-INFO-001'] = {'status': 'PASS' if info == [2.0, 1.0] else 'FAIL', 'version': info}
+    snapshot_before = query_frame(dev, 402, 7)
+    results['UART-DIAG-001'] = {'status': 'PASS' if snapshot_before is not None and all(math.isfinite(x) for x in snapshot_before) else 'FAIL', 'snapshot': snapshot_before, 'fields': ['uptime_ms', 'accepted', 'rejected', 'watchdog_stops', 'stopped', 'ina_ok', 'pwm_ok']}
     baseline = capture(dev, duration, rows, 'baseline')
     results['UART-ODOM-001'] = {'status': 'PASS' if baseline['frames'] >= 10 and baseline['decode_errors'] == 0 and baseline['overflow'] == 0 else 'FAIL', 'metrics': baseline}
     pid_before = pid_query(dev, 2.0)
@@ -102,7 +114,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     rows = []
-    print('SAFE UART suite: no motion commands, no NVS writes. STOP/PID read only.')
+    print('SAFE UART suite: no motion commands, no NVS writes. STOP, PID, version and diagnostics queries only.')
     try:
         with Client(a.port, a.baud) as dev:
             time.sleep(0.3)

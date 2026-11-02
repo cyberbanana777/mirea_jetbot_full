@@ -58,3 +58,7 @@ This suite **does not** measure PCA9685 PWM pins, motor torque, ESP32 scheduler
 jitter, hardware watchdog behavior, or NVS persistence. No motor motion test
 is included. Full ESP32 build and hardware execution of this suite remain to
 be performed by the operator.
+
+### v2.1 hardware regression
+
+After flashing the updated firmware, run the same `hardware_suite.py` command. It now also queries `501` and `402`. This extension does not exercise motion or NVS writes. Firmware build and hardware behavior are unverified in this release; validate on your setup.

@@ -61,6 +61,10 @@ bool i2cProbe(uint8_t address)
 unsigned long odom_tmr = 0;   // момент последнего расчёта одометрии, мкс
 unsigned long control_next_us = 0; // момент следующего такта контура скорости, мкс
 unsigned long emergency_timer = 0; // last accepted motion command only
+uint32_t accepted_commands = 0;
+uint32_t rejected_commands = 0;
+uint32_t watchdog_stop_count = 0;
+bool watchdog_stop_latched = false;
 uint64_t update_timer;
 
 // Одометрия (50 Гц): считается по тикам энкодеров, как и раньше
@@ -419,6 +423,10 @@ void loop()
       !controller.isStopped()) {
     controller.emergencyStop();
   }
+  if (host_silent && !watchdog_stop_latched) {
+    ++watchdog_stop_count;
+    watchdog_stop_latched = true;
+  }
   if (host_silent)
   {
     telemetry_on = false; // нет связи: канал нужен одометрии
@@ -472,6 +480,7 @@ void loop()
     // A malformed frame or a configuration query must not keep motors alive.
     // Validate count and command family before refreshing the motion watchdog.
     if (!CommandPolicy::validShape(cmd)) {
+      ++rejected_commands;
       mainReceiver.update();
       continue;
     }
@@ -479,13 +488,23 @@ void loop()
       // Never arm motors during a detected peripheral/voltage fault.
       if (SafetyPolicy::mustStop(false, inaOk, pwmOk, bus_voltage, min_voltage) ||
           !CommandPolicy::validMotionValues(cmd)) {
+        ++rejected_commands;
         mainReceiver.update();
         continue;
       }
       emergency_timer = millis();
+      watchdog_stop_latched = false;
     }
 
-    dispatchCommand(cmd, commandContext);
+    ++accepted_commands;
+    if (cmd.type == Command::REQUEST_INFO) {
+      deviceInfoPublish();
+    } else if (cmd.type == Command::REQUEST_DIAGNOSTICS) {
+      diagnosticSnapshotPublish(millis(), accepted_commands, rejected_commands,
+         watchdog_stop_count, controller.isStopped(), inaOk, pwmOk);
+    } else {
+      dispatchCommand(cmd, commandContext);
+    }
     mainReceiver.update();
   }
 

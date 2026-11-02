@@ -16,3 +16,7 @@
 
 - UART bench testing is the active workflow; ROS 2 integration remains unverified and deferred.
 - Software STOP ID 103 only sets zero speed target; direct zero PWM has not been independently verified.
+
+- v2.1 intentionally has no transactional ACK/NACK. Design request sequence IDs and acknowledge *applied* settings (including NVS failure handling), then add host tests.
+- `402` diagnostics count structural rejects, not malformed frame overflows and not semantic invalidity inside dispatch handlers. Add separate parser/validation metrics.
+- Safety: watchdog timing and physical zero-PWM still need hardware verification; no separate motor-power cutoff exists.

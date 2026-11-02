@@ -75,3 +75,21 @@ void speedWindowPublish(int min_edges, int align) {
         Serial.write(buf, len);
     }
 }
+
+// Numeric-only frames maintain compatibility with the strict Python decoder.
+void deviceInfoPublish() {
+    static const char msg[] = "$501;2;1;#\r\n"; // major=2, minor=1
+    if (Serial.availableForWrite() >= (int)(sizeof(msg) - 1))
+        Serial.write((const uint8_t*)msg, sizeof(msg) - 1);
+}
+
+void diagnosticSnapshotPublish(uint32_t uptime_ms, uint32_t accepted, uint32_t rejected,
+                               uint32_t watchdog_stops, bool motor_stopped,
+                               bool ina_ok, bool pwm_ok) {
+    char buf[120];
+    const int n = snprintf(buf, sizeof(buf), "$402;%lu;%lu;%lu;%lu;%u;%u;%u;#\r\n",
+      (unsigned long)uptime_ms, (unsigned long)accepted, (unsigned long)rejected,
+      (unsigned long)watchdog_stops, motor_stopped ? 1U : 0U, ina_ok ? 1U : 0U, pwm_ok ? 1U : 0U);
+    if (n > 0 && n < (int)sizeof(buf) && Serial.availableForWrite() >= n)
+        Serial.write((const uint8_t*)buf, n);
+}

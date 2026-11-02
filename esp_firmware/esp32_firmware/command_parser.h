@@ -25,7 +25,9 @@ enum class Command : uint8_t {
   REQUEST_ADRC = 17,     // $17;#                 запросить регулятор и параметры LADRC ($7)
   // --- Отладка ---
   SET_SPEED_WINDOW = 18, // окно оценки скорости
-  STOP = 19              // $103;#
+  STOP = 19,             // $103;#
+  REQUEST_DIAGNOSTICS = 20, // $402;#
+  REQUEST_INFO = 21         // $501;#
 
 };
 

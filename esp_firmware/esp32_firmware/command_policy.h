@@ -30,7 +30,8 @@ struct CommandPolicy {
           (c.type == Command::SET_SPEED_WINDOW && c.count == 0);
       case Command::SET_TELEMETRY: return c.count == 1;
       case Command::STOP: case Command::REQUEST_PID: case Command::REQUEST_FF:
-      case Command::REQUEST_ADRC: return c.count == 0;
+      case Command::REQUEST_ADRC: case Command::REQUEST_DIAGNOSTICS:
+      case Command::REQUEST_INFO: return c.count == 0;
       default: return false;
     }
   }

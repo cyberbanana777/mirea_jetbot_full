@@ -49,3 +49,13 @@ The `2xx` range is the **configuration family in both directions** (SET and GET 
 ## Safety
 
 There is NO hardware motor power disconnect/enable. Software stop sets a zero target but cannot guarantee physical braking or de-energization in the presence of processor/I2C/PCA9685 failure. Do not run unattended; bench test with wheels lifted first. A hardware enable / independent motor power cut is recommended for physical safety. Motion watchdog updates only on structurally valid motion commands, not queries. **Current limitation:** a syntactically valid but semantically rejected command may still refresh the watchdog; track as a priority follow-up.
+
+## v2.1 read-only API extension
+
+- `$501;#` -> `$501;2;1;#` (protocol major/minor, **not** a firmware version).
+- `$402;#` -> `$402;uptime_ms;accepted_commands;rejected_commands;watchdog_stops;motor_stopped;ina_ok;pwm_ok;#`.
+- Counters reset at boot, may wrap after 2^32 increments. `accepted_commands` counts frames passing structural validation, **not successful application of settings**. `rejected_commands` counts fully received but structurally invalid/unknown frames; UART receiver overflow/unfinished frames are not included. `watchdog_stops` counts transitions into communication timeout, even if motors were already stopped.
+- Replies are best-effort: responses may be omitted when the TX buffer lacks room. For this reason retry read-only queries with an application timeout.
+- `ACK/NACK` for setting commands is **not yet implemented**. Do not mistake successful parsing for successful NVS writes.
+
+Existing 101/103/202/301 IDs and payloads remain unchanged for hardware regression testing.

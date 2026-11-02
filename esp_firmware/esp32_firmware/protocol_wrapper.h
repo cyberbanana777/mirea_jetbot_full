@@ -3,7 +3,11 @@
 
 #include <Arduino.h>
 
-// Outbound protocol is legacy v1 by default. v2 uses grouped IDs (3xx/4xx/2xx).
+// Main UART grouped API v2.1; Serial1 has a separate protocol.
+void deviceInfoPublish();
+void diagnosticSnapshotPublish(uint32_t uptime_ms, uint32_t accepted, uint32_t rejected,
+                               uint32_t watchdog_stops, bool motor_stopped,
+                               bool ina_ok, bool pwm_ok);
 
 // mmsg type = 1
 void odomPublish (
