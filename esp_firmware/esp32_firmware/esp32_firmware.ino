@@ -31,6 +31,7 @@ const char *VERSION = "2.4.0";
 #include "safety_policy.h"
 #include "control_scheduler.h"
 #include "serial_service.h"
+#include "control_loop_service.h"
 
 Encoders encoders;
 ErrorManager error_manager;
@@ -91,6 +92,13 @@ float linear_vel_ = 0.0;
 float angular_vel_ = 0.0;
 float left_vel_ = 0.0;
 float right_vel_ = 0.0;
+
+ControlLoopContext controlLoopContext = {
+  encoders, speedR, speedL, controller, odometry,
+  telemetry_on, telemetry_div, linear_vel_, angular_vel_,
+  left_vel_, right_vel_
+};
+ControlLoopService controlLoop(controlLoopContext);
 
 // Сеть Jetson Nano из сообщения $6 (только для показа на OLED-дисплее;
 // сама ESP32 к Wi-Fi не подключается)
@@ -282,88 +290,10 @@ SerialService serialService(serialServiceContext);
 знаки угловых скоростей колёс были одинаковые
 * @return result, обороты в секунду типа float32_t.
 */
-float convert_ticks_to_freq(long ticks, long timeout_micros, char dir)
-{
-  // 4 импульса на 1 шаг, 270 шагов на оборот (ENC_EDGES_PER_REV из config.h)
-  const float turn_per_tick = 1.0 / ENC_EDGES_PER_REV;
-  const double micros_to_sec = 1.0 / 1000000.0;
-  float timeout_sec = timeout_micros * micros_to_sec;
-  float result = turn_per_tick * ticks / timeout_sec;
-
-  // для левого колеса инвертируем частоту
-  if (dir == 'l')
-  {
-    result = result * (-1);
-  }
-  else if (dir == 'r')
-  {
-    result = result * 1;
-  }
-
-  return result;
-}
-
-/**
- * @brief Путь колеса по числу тиков энкодера, м (вперёд > 0).
- * Использует convert_ticks_to_freq с периодом 1 с: частота за 1 с = число
- * оборотов, поэтому константы энкодера и знак колеса задаются в одном месте.
- */
-float convert_ticks_to_distance(long ticks, char dir)
-{
-  const long one_second_micros = 1000000;
-  float turns = convert_ticks_to_freq(ticks, one_second_micros, dir);
-  return turns * 2 * Pi * WHEEL_RADIUS;
-}
-
-/**
- * @brief Можно ли сейчас занимать шину I2C медленной операцией (дисплей, INA219,
- * проверка устройств). Да, если до следующего такта контура осталось достаточно
- * времени: PCA9685 с моторами сидит на той же шине, и такт нельзя задерживать.
- */
+// The 100 Hz control step and 50 Hz odometry step live in ControlLoopService.
 bool i2cWindowOpen()
 {
   return ControlScheduler::i2cWindowOpen(control_next_us, I2C_WINDOW_MIN_US);
-}
-
-/**
- * @brief Один такт контура скорости (100 Гц): оценка скорости колёс по фронтам
- * энкодеров и обновление регуляторов (feedforward + ПИ или LADRC, см. $15).
- */
-void controlStep()
-{
-  // Снимок (позиция, время последнего фронта) для каждого колеса, затем время "сейчас":
-  // возраст последнего фронта получается неотрицательным
-  // (позиция, время последнего фронта каждого из 4 типов, направление) для каждого колеса,
-  // затем время "сейчас": возраст фронтов получается неотрицательным
-  int32_t posR, posL;
-  uint32_t phR[4], phL[4];
-  int8_t dirR, dirL;
-  encoders.snapshotRightPhases(posR, phR, dirR);
-  encoders.snapshotLeftPhases(posL, phL, dirL);
-  const uint32_t now = micros();
-
-  // об/с -> м/с; знак колеса приводится так, чтобы вперёд было > 0 у обоих
-  const float revR = ENC_SIGN_R * speedR.updateAligned(posR, phR, dirR, now);
-  const float revL = ENC_SIGN_L * speedL.updateAligned(posL, phL, dirL, now);
-  const float rightLinVel = revR * 2 * Pi * WHEEL_RADIUS;
-  const float leftLinVel = revL * 2 * Pi * WHEEL_RADIUS;
-
-  // Регуляторы выдают сигнал на моторы
-  controller.update(leftLinVel, rightLinVel);
-
-  // Скорости для отправки на Jetson
-  right_vel_ = controller.getFilteredRight();
-  left_vel_ = controller.getFilteredLeft();
-  linear_vel_ = (right_vel_ + left_vel_) / 2.0;
-  angular_vel_ = (right_vel_ - left_vel_) / WHEEL_BASE; // для дифференциального привода
-
-  if (telemetry_on && ++telemetry_div >= TELEMETRY_DECIMATION)
-  {
-    telemetry_div = 0;
-    telemetryPublish(now,
-                     controller.getRefLeft(), left_vel_, controller.getOutputLeft(),
-                     controller.getRefRight(), right_vel_, controller.getOutputRight());
-  }
 }
 
 void setup()
@@ -453,30 +383,14 @@ void loop()
   // Контур скорости: каждые CONTROL_PERIOD_US (10 мс, 100 Гц)
   if (ControlScheduler::controlDue(now, control_next_us, CONTROL_PERIOD_US))
   {
-    controlStep();
+    controlLoop.controlStep();
     now = micros();
   }
 
   // Одометрия: каждые odom_timer_timeout (20 мс, 50 Гц)
   if (ControlScheduler::odometryDue(now, odom_tmr, odom_timer_timeout))
   {
-
-    // 1. Тики энкодеров за период одометрии
-    int32_t rightTicks = encoders.getRightAndReset();
-    int32_t leftTicks = encoders.getLeftAndReset();
-
-    // 2. Поза по пройденному колёсами пути (м)
-    odometry.update(convert_ticks_to_distance(leftTicks, 'l'),
-                    convert_ticks_to_distance(rightTicks, 'r'));
-
-    // 3. Публикация одометрии (50 Гц). Скорости колёс берутся из контура скорости
-    //    (right_vel_ и др. обновляются на каждом его такте). Пока включена
-    //    телеметрия, канал отдан ей, и одометрия не публикуется.
-    if (!telemetry_on)
-    {
-      odomPublish(odometry.x(), odometry.y(), odometry.heading(),
-                  linear_vel_, angular_vel_, left_vel_, right_vel_);
-    }
+    controlLoop.odometryStep();
   }
 
   // Обработчики UART сохраняют прежний порядок и ограничение 4 кадра за loop().

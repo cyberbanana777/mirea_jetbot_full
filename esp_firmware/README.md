@@ -147,3 +147,13 @@ No UART API, controller, scheduler, or storage logic changes.
 No automatic ESP32 build was added. Compile/flash manually and run the existing
 7-case safe UART suite. The included Python test checks source declarations,
 not the target toolchain/linker.
+
+## v2.2.6 — control and odometry service
+
+`control_loop_service.h/.cpp` now owns the original 100 Hz speed-estimation,
+controller update and telemetry, plus the 50 Hz encoder-distance odometry.
+`loop()` continues to schedule both with `ControlScheduler` and preserves
+UART polling, watchdog, command processing, and I2C ordering. Mutable
+configuration remains in `config.cpp`; no firmware auto-build was introduced.
+Manual board compilation and the same seven safe UART tests are required
+before tagging this version.
