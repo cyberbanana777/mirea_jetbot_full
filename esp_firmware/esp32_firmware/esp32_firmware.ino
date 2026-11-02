@@ -138,9 +138,13 @@ const uint8_t MAX_I2C_ERRORS = 0; // после скольких ошибок и
 unsigned long lastI2CCheck = 0;
 const unsigned long I2C_CHECK_INTERVAL = 500; // 0.5 секунды
 
+// Diagnostic state is independent of safety flags and UART framing.
+I2CDeviceDiagnostics inaDiagnostics, pwmDiagnostics, oledDiagnostics;
+
 HardwareMonitorContext hardwareMonitorContext = {
   INA, controller, display, inaOk, pwmOk, oledOk,
   inaErrors, pwmErrors, oledErrors,
+  inaDiagnostics, pwmDiagnostics, oledDiagnostics,
   bus_voltage, shunt_v, current, pros,
   min_voltage, max_voltage, MAX_I2C_ERRORS, I2C_CLOCK_HZ, VERSION, i2cProbe
 };
@@ -221,6 +225,7 @@ bool i2cWindowOpen()
 void setup()
 {
   startupService.begin();
+  hardwareMonitor.observeStartup();
 }
 
 void loop()
@@ -256,7 +261,7 @@ void loop()
     update_timer = millis();
     hardwareMonitor.samplePower();
   }
-  // Мониторинг устройств I2C (не чаще 2 секунд)
+  // Мониторинг устройств I2C (интервал 500 мс)
   if ((millis() - lastI2CCheck >= I2C_CHECK_INTERVAL) && i2cWindowOpen())
   {
     lastI2CCheck = millis();

@@ -191,3 +191,7 @@ ESP32 firmware compilation is part of this repository's checks.
   power isolation, a bus failure cannot guarantee motor de-energization.
 - Rebuild and flash manually, then run the SAFE UART suite (7/7 expected).
   This test does **not** exercise actual I²C faults, motor PWM, or NVS writes.
+
+
+### v2.3.2 — I2C diagnostic counters (unvalidated on board)
+`HardwareMonitor` now records internal `I2CDeviceDiagnostics` for INA219, PCA9685 and OLED: state (`kNotDetected`, `kHealthy`, `kFault`, `kRecovered`), cumulative failed I2C probes, recovery attempts and successful recovery operations. Counters saturate at UINT32_MAX. Startup state is observed after `StartupService::begin()`. No additional I2C traffic or UART command has been added. The pre-existing I2C recovery and motor stop decisions are unchanged. These fields are not yet accessible over UART; inspect through a debugger if needed. Manual Arduino build and the SAFE UART 7/7 suite are required; live disconnection and PWM behavior are not validated by that suite.
