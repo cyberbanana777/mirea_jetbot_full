@@ -5,6 +5,7 @@
 #include "motor_controller.h"
 #include "flash_storage.h"
 #include "speed_estimator.h"
+#include "hardware_monitor.h"
 
 // Each service receives only its own non-owning dependencies.
 struct MotionContext {
@@ -46,6 +47,9 @@ struct DiagnosticsContext {
   uint32_t& watchdog_stop_count;
   bool& inaOk;
   bool& pwmOk;
+  const I2CDeviceDiagnostics &inaDiagnostics;
+  const I2CDeviceDiagnostics &pwmDiagnostics;
+  const I2CDeviceDiagnostics &oledDiagnostics;
 };
 
 struct CommandContext {

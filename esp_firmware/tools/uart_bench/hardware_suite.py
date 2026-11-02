@@ -12,7 +12,7 @@ from pathlib import Path
 from client import Client
 
 # Only permitted outbound IDs: STOP and read-only PID request.
-ALLOWED_TX_IDS = {103, 202, 211, 402, 501}
+ALLOWED_TX_IDS = {103, 202, 211, 402, 405, 501}
 MALFORMED = [
     ('unknown_id', b'$999;#'),
     ('non_numeric_id', b'$abc;#'),
@@ -95,6 +95,17 @@ def run_suite(dev, duration, rows, malformed=True):
     results['UART-INFO-001'] = {'status': 'PASS' if info == [2.0, 2.0] else 'FAIL', 'version': info}
     snapshot_before = query_frame(dev, 402, 7)
     results['UART-DIAG-001'] = {'status': 'PASS' if snapshot_before is not None and all(math.isfinite(x) for x in snapshot_before) else 'FAIL', 'snapshot': snapshot_before, 'fields': ['uptime_ms', 'accepted', 'rejected', 'watchdog_stops', 'stopped', 'ina_ok', 'pwm_ok']}
+    i2c = query_frame(dev, 405, 12)
+    ok_i2c = i2c is not None and all(
+        math.isfinite(x) and x.is_integer() and x >= 0 for x in i2c
+    ) and all(i2c[j] <= 3 for j in (0, 4, 8)) and all(
+        i2c[j] <= 4294967295 for j in range(12) if j not in (0, 4, 8)
+    ) and all(i2c[j+3] <= i2c[j+2] for j in (0, 4, 8))
+    results['UART-I2C-DIAG-001'] = {
+        'status': 'PASS' if ok_i2c else 'FAIL', 'snapshot': i2c,
+        'device_order': ['INA219', 'PCA9685', 'OLED'],
+        'fields_per_device': ['state', 'probe_failures', 'recovery_attempts', 'successful_recoveries']
+    }
     baseline = capture(dev, duration, rows, 'baseline')
     results['UART-ODOM-001'] = {'status': 'PASS' if baseline['frames'] >= 10 and baseline['decode_errors'] == 0 and baseline['overflow'] == 0 else 'FAIL', 'metrics': baseline}
     pid_before = pid_query(dev, 2.0)

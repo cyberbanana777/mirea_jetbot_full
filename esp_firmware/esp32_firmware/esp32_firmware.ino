@@ -117,6 +117,9 @@ bool inaOk = false;
 bool pwmOk = false;
 bool oledOk = false;
 
+// Diagnostic state is independent of safety flags and UART framing.
+I2CDeviceDiagnostics inaDiagnostics, pwmDiagnostics, oledDiagnostics;
+
 // Construct after all referenced hardware status flags have been declared.
 CommandContext commandContext = {
   {controller, telemetry_on, telemetry_div},
@@ -126,7 +129,8 @@ CommandContext commandContext = {
    REF_TAU_S, ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF,
    CTRL_MODE, accepted_commands, rejected_commands},
   {controller, accepted_commands, rejected_commands,
-   watchdog_stop_count, inaOk, pwmOk}
+   watchdog_stop_count, inaOk, pwmOk,
+   inaDiagnostics, pwmDiagnostics, oledDiagnostics}
 };
 
 // счётчики ошибок подряд
@@ -137,9 +141,6 @@ const uint8_t MAX_I2C_ERRORS = 0; // после скольких ошибок и
 
 unsigned long lastI2CCheck = 0;
 const unsigned long I2C_CHECK_INTERVAL = 500; // 0.5 секунды
-
-// Diagnostic state is independent of safety flags and UART framing.
-I2CDeviceDiagnostics inaDiagnostics, pwmDiagnostics, oledDiagnostics;
 
 HardwareMonitorContext hardwareMonitorContext = {
   INA, controller, display, inaOk, pwmOk, oledOk,

@@ -2,9 +2,13 @@
 #define PROTOCOL_WRAPPER_H
 
 #include <Arduino.h>
+#include "hardware_monitor.h"
 
 // Main UART grouped API v2.2; Serial1 has a separate protocol.
 void deviceInfoPublish();
+// 405: three device groups (INA219, PCA9685, OLED), each state/failures/attempts/recoveries.
+void i2cDiagnosticsPublish(const I2CDeviceDiagnostics &ina, const I2CDeviceDiagnostics &pwm,
+                           const I2CDeviceDiagnostics &oled);
 // Transactional config: 502 ACK(seq,command_id), 503 NACK(seq,command_id,error).
 // 211 PID snapshot(seq, six gains). Error 1: invalid parameter.
 void configAckPublish(uint16_t seq, uint16_t command);

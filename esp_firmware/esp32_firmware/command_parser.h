@@ -29,7 +29,8 @@ enum class Command : uint8_t {
   REQUEST_DIAGNOSTICS = 20, // $402;#
   REQUEST_PID_TX = 22,  // $211;request_id;#
   SET_PID_TX = 23, // $210;request_id;KpL;KiL;KdL;KpR;KiR;KdR;# (RAM only)
-  REQUEST_INFO = 21         // $501;#
+  REQUEST_INFO = 21,        // $501;#
+  REQUEST_I2C_DIAGNOSTICS = 24 // $405;# (read-only)
 
 };
 

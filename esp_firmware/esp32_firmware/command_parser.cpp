@@ -25,6 +25,7 @@ Command decodeCommand(long id) {
     case 403: return Command::SET_TELEMETRY;
     case 404: return Command::SET_SPEED_WINDOW;
     case 402: return Command::REQUEST_DIAGNOSTICS;
+    case 405: return Command::REQUEST_I2C_DIAGNOSTICS;
     case 501: return Command::REQUEST_INFO;
     default: return Command::UNKNOWN;
   }

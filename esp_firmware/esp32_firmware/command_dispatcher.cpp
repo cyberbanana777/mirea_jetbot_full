@@ -54,6 +54,7 @@ void dispatchCommand(const ParsedCommand& cmd, CommandContext& ctx) {
 
     case Command::REQUEST_INFO:
     case Command::REQUEST_DIAGNOSTICS:
+    case Command::REQUEST_I2C_DIAGNOSTICS:
       handleDiagnosticsCommand(cmd, ctx.diagnostics);
       break;
 

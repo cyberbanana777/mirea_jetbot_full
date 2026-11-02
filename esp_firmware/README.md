@@ -195,3 +195,7 @@ ESP32 firmware compilation is part of this repository's checks.
 
 ### v2.3.2 — I2C diagnostic counters (unvalidated on board)
 `HardwareMonitor` now records internal `I2CDeviceDiagnostics` for INA219, PCA9685 and OLED: state (`kNotDetected`, `kHealthy`, `kFault`, `kRecovered`), cumulative failed I2C probes, recovery attempts and successful recovery operations. Counters saturate at UINT32_MAX. Startup state is observed after `StartupService::begin()`. No additional I2C traffic or UART command has been added. The pre-existing I2C recovery and motor stop decisions are unchanged. These fields are not yet accessible over UART; inspect through a debugger if needed. Manual Arduino build and the SAFE UART 7/7 suite are required; live disconnection and PWM behavior are not validated by that suite.
+
+### v2.3.3 — read-only UART I2C diagnostics
+
+A new `$405;#` query returns three ordered I2C diagnostic records (INA219, PCA9685, OLED), four numeric fields each: state, failed probes, recovery attempts, successful recoveries. The existing 2.2 frames are unchanged. The SAFE UART suite adds `UART-I2C-DIAG-001` (now **8 cases**). The query is observational only and makes no new I2C transactions. No auto firmware build; compile/flash manually and run the safe suite.

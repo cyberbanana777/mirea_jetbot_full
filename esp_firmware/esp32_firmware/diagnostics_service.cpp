@@ -15,6 +15,10 @@ void handleDiagnosticsCommand(const ParsedCommand& cmd, DiagnosticsContext& ctx)
           ctx.controller.isStopped(), ctx.inaOk, ctx.pwmOk);
       break;
 
+    case Command::REQUEST_I2C_DIAGNOSTICS:
+      i2cDiagnosticsPublish(ctx.inaDiagnostics, ctx.pwmDiagnostics, ctx.oledDiagnostics);
+      break;
+
     default:
       break;
   }

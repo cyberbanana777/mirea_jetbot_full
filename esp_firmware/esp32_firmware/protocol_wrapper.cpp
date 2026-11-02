@@ -111,3 +111,19 @@ void transactionalPidPublish(uint16_t seq, double kpL, double kiL, double kdL,
         (unsigned)seq, kpL, kiL, kdL, kpR, kiR, kdR);
     if (n > 0 && n < (int)sizeof(buf)) Serial.write((const uint8_t*)buf, n);
 }
+
+// Read-only I2C snapshot. Numeric-only, <=192 bytes even at saturated counters.
+void i2cDiagnosticsPublish(const I2CDeviceDiagnostics &ina, const I2CDeviceDiagnostics &pwm,
+                           const I2CDeviceDiagnostics &oled) {
+    char buf[192];
+    int n = snprintf(buf, sizeof(buf),
+        "$405;%u;%lu;%lu;%lu;%u;%lu;%lu;%lu;%u;%lu;%lu;%lu;#\r\n",
+        (unsigned)ina.state, (unsigned long)ina.probeFailures,
+        (unsigned long)ina.recoveryAttempts, (unsigned long)ina.successfulRecoveries,
+        (unsigned)pwm.state, (unsigned long)pwm.probeFailures,
+        (unsigned long)pwm.recoveryAttempts, (unsigned long)pwm.successfulRecoveries,
+        (unsigned)oled.state, (unsigned long)oled.probeFailures,
+        (unsigned long)oled.recoveryAttempts, (unsigned long)oled.successfulRecoveries);
+    if (n > 0 && n < (int)sizeof(buf) && Serial.availableForWrite() >= n)
+        Serial.write((const uint8_t*)buf, n);
+}

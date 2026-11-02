@@ -69,3 +69,9 @@ Existing 101/103/202/301 IDs and payloads remain unchanged for hardware regressi
 - No Flash/NVS write in 210. Old 201/204 exist for now, but are **not transactional**. Do not use 204 in the safe suite.
 - Syntactically malformed frames or invalid request IDs cannot be reliably correlated, so they are silently rejected; this is a known limitation. The read-only 211 reply is correlated by request ID, but has no separate ACK. Do not retry mutation 210 automatically after a lost ACK until idempotency is defined; setting the same six gains is mathematically idempotent but could reset controller state.
 - Frames can be lost. A received ACK means PID setters ran, **not** that motors physically responded. A NACK does not modify gains. Neither constitutes a persistent-storage acknowledgement.
+
+## v2.3.3 — read-only I2C diagnostic snapshot
+
+Request `$405;#` produces `$405;ina_state;ina_failures;ina_attempts;ina_recoveries;pwm_state;pwm_failures;pwm_attempts;pwm_recoveries;oled_state;oled_failures;oled_attempts;oled_recoveries;#`.
+
+All twelve fields are unsigned decimal integers. Devices are ordered **INA219, PCA9685, OLED**. States: `0` not detected at startup, `1` healthy, `2` probe/recovery fault, `3` recovered. Counters accumulate since boot and saturate at `4294967295`. The response is best-effort and can be dropped if UART TX space is insufficient. A read adds no I2C operations and does not change NVS, PWM, watchdog or settings. I2C ACK alone cannot prove that output pins or motor power are safe.
