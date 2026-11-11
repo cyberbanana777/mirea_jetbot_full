@@ -2,6 +2,30 @@
 
 This package focuses on **ESP32 + Python UART bench tests**. ROS 2 is **not needed**; `serial_bridge_cpp_reference/` is retained only as source reference, not built or launched. `jetbot_stats.py` is unchanged and uses **Serial1**, a separate channel.
 
+## Versioning and branch status
+
+The project carries **three independent version axes**; they are not comparable with each other (details in `PROTOCOL.md`, section «Versioning»):
+
+| Axis | Where | Current value |
+|---|---|---|
+| Protocol version | response to `$501;#` | `2;2` (major 2, minor 2) |
+| Firmware build version | `VERSION` constant in `esp32_firmware/esp32_firmware.ino` | `2.4.0` — shown on the OLED, **not** transmitted over UART |
+| Documentation revision | headings below and `CHANGELOG.rst` | this README covers up to v2.3.3; `CHANGELOG.rst` has an «Unreleased» section for the v2 line, and its last numbered entry is 2.2.0 (2026-10-25) |
+
+Known inconsistencies, recorded rather than silently resolved:
+
+- the firmware emits `$501;2;2;#`, but the comment on the same source line still says `// major=2, minor=1` — the emitted value is authoritative, the comment is stale;
+- `VERSION = "2.4.0"` was inherited from an earlier commit on `main` and was **not** bumped while the protocol v2 line was developed here, so it does not describe the v2 work in this branch;
+- the protocol version was not bumped for the v2.3.x features, so `$501` still reports `2;2` although `$405` (read-only I2C snapshot) exists.
+
+**ROS 2 bridge migration is not finished.** The firmware implements only protocol v2, but the working `serial_bridge_cpp` package at the repository root is still on v1: it emits `$1;v;w;#` (rejected by this firmware as an unknown ID) and expects feedback types `1`/`2` while the firmware emits `301`/`202`. As a result neither motion nor odometry works over the integrated path today.
+
+A v2 bridge implementation already exists in `serial_bridge_cpp_reference/` (it differs from the working package in exactly two files: `frame_parser.hpp` and `serial_bridge_node.cpp`). It is **not built by colcon** — the whole `esp_firmware/` tree is excluded by `COLCON_IGNORE` — and it declares the same package name `serial_bridge_cpp`, so it must be renamed when moved into the workspace root. Its gtest suite still covers only v1 frames. The same v1 dependency affects `web_regulators_configurator` and `simple_PID_configurator`, which emit `$1`..`$5` and parse feedback as type `1`/`2`.
+
+The host test `tests/test_bridge_v2.cpp` demonstrates the difference: against the working `include/` it fails (the working parser accepts `nan`), against `serial_bridge_cpp_reference/include/` it passes.
+
+Architecture memory for the whole repository lives in `../docs/ai/` (`architecture.md`, `components.md`, `decisions.md`, `project-state.md`).
+
 ## Quick start (motors unpowered)
 
 1. Back up the working firmware and calibration. Compile `esp32_firmware/esp32_firmware.ino` with the project’s Arduino ESP32 libraries (including matching `uPID`). Full target build has **not** been verified here.
@@ -15,7 +39,7 @@ This package focuses on **ESP32 + Python UART bench tests**. ROS 2 is **not need
 
 **Only after verifying above with wheels securely suspended**, use `motor_probe.py --port /dev/ttyUSB0 --confirm-wheels-lifted` with someone at the motor power switch. Motor power must NOT be enabled for initial steps. The probe sends low speed for up to one second by default and sends STOP in `finally`, but a program crash, USB fault, ESP32 freeze or PCA9685 fault can defeat software stop.
 
-The UART scripts never write NVS and never start motors except for explicit `motor_probe.py`. A serial write succeeding does not imply the ESP32 accepted a command; protocol v2 does not yet provide ACK/NACK.
+The UART scripts never write NVS and never start motors except for explicit `motor_probe.py`. A serial write succeeding does not imply the ESP32 accepted a command: ACK/NACK exists **only** for the transactional command `210` (see v2.2 below); all other setting commands have no confirmation, so a read-back is required to verify what was actually applied.
 
 **Known limitations:** See `TODO.md` and `PROTOCOL.md`; no hardware kill/enable, no end-to-end checksum or transactional ACK, watchdog semantics, I2C timing, and full target build not tested.
 

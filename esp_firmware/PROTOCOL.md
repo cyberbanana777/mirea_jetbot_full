@@ -4,7 +4,11 @@ This is the sole protocol supported on the main ESP32 Serial <-> Jetson ROS 2 `s
 
 ## Framing
 
-ASCII: `$<id>;<arg1>;...;#` (optional CR/LF after `#`). `id` is an integer; fields are finite decimal numbers; `.` is the decimal point. Max input fields on ESP32: 7. Any malformed/unknown command is ignored. No checksum. ACK/NACK is supported only for transactional 210; legacy-style setting commands still have no confirmation.
+ASCII: `$<id>;<arg1>;...;#` (optional CR/LF after `#`). `id` is parsed with `strtol` and must be a plain decimal integer; fields are parsed with `strtof` and must be finite decimal numbers (`.` is the decimal point). Max input fields on ESP32: 7 — a frame carrying an 8th argument is rejected as malformed. No checksum.
+
+A fully received frame that is malformed (bad syntax, non-numeric or non-finite field, wrong number of arguments) or carries an unknown ID is **not applied** and has no side effect. It is counted in the `rejected_commands` diagnostic counter, as is a motion frame that passes the structural check but is rejected by the safety or value check (see «Safety»). Note that only completely received frames are counted: UART receiver overflow and unfinished frames are not included in that counter. `accepted_commands` counts frames that passed the structural check and were dispatched; it does **not** mean that the settings were actually applied.
+
+ACK/NACK is supported only for transactional 210; legacy-style setting commands still have no confirmation.
 
 ## Jetson -> ESP32
 
@@ -23,8 +27,13 @@ ASCII: `$<id>;<arg1>;...;#` (optional CR/LF after `#`). `id` is an integer; fiel
 |207|tau_s[,save]|reference filter|
 |208|mode[,save]|0 PI / 1 LADRC|
 |209|none|request LADRC state|
+|210|request_id,kpL,kiL,kdL,kpR,kiR,kdR|transactional PID set (RAM only), ACK/NACK|
+|211|request_id|request PID values with a request id (response `$211`)|
+|402|none|request diagnostic snapshot (response `$402`)|
 |403|enabled|toggle 100 Hz diagnostic stream (odometry paused while enabled)|
 |404|[min_edges[,aligned]]|speed estimator window request/change|
+|405|none|request read-only I2C diagnostic snapshot (response `$405`)|
+|501|none|request protocol version (response `$501`)|
 
 ## ESP32 -> Jetson
 
@@ -37,18 +46,39 @@ ASCII: `$<id>;<arg1>;...;#` (optional CR/LF after `#`). `id` is an integer; fiel
 |203|mode,wc,wo,b0L,b0R,ff|ADRC response|
 |401|time_us,refL,velL,dutyL,refR,velR,dutyR|diagnostics stream|
 |404|min_edges,aligned|speed estimator response|
+|211|request_id,kpL,kiL,kdL,kpR,kiR,kdR|transactional PID read response|
+|402|uptime_ms,accepted_commands,rejected_commands,watchdog_stops,motor_stopped,ina_ok,pwm_ok|diagnostic snapshot|
+|405|ina_state,ina_failures,ina_attempts,ina_recoveries,pwm_state,pwm_failures,pwm_attempts,pwm_recoveries,oled_state,oled_failures,oled_attempts,oled_recoveries|read-only I2C snapshot|
+|501|major,minor|protocol version (not a firmware version)|
+|502|request_id,command|ACK for a transactional command|
+|503|request_id,command,error|NACK for a transactional command (error `1` = invalid PID)|
 
 ### Design decision
 
-The `2xx` range is the **configuration family in both directions** (SET and GET response have the same ID in selected cases), rather than attempting to allocate strictly by UART direction. `3xx` is state telemetry, `4xx` is diagnostics, `1xx` motion. `5xx` reserved for future request sequencing / ACK / NACK and protocol metadata. This is a transitional protocol contract, not yet a finalized transactional API.
+The `2xx` range is the **configuration family in both directions** (SET and GET response have the same ID in selected cases), rather than attempting to allocate strictly by UART direction. `3xx` is state telemetry, `4xx` is diagnostics, `1xx` motion. `5xx` is **already allocated**: `501` is protocol metadata (version), `502`/`503` are ACK/NACK for transactional commands. This is a transitional protocol contract, not yet a finalized transactional API.
 
 ### ROS 2
 
-`/cmd_vel` now emits `$101;v;w;#`. The bridge accepts `$301;...;#` for `/odom`, `/sensors/wheel/*/speed`, TF, and `$202;...;#` for `/PIDcoeffs`. `serial/cmd` remains a low-level raw-frame topic, so existing external publishers must update their IDs. `serial/feedback` keeps raw telemetry. Other incoming frames currently appear as unexpected messages; structured ROS publishers for diagnostics are a follow-up.
+**Current state (as of the `fix/esp32_firmware` branch): the ROS-side migration to v2 is NOT complete.** The firmware implements only v2, but the working `serial_bridge_cpp` package at the repository root is still on **v1**:
+
+- it emits `$1;<linear>;<angular>;#` for `/cmd_vel` — the firmware rejects this ID as unknown;
+- it expects feedback frame type `1` (odometry) and type `2` (PID) — the firmware emits `301` and `202`, so they are logged as unexpected frames.
+
+As a consequence neither motion nor odometry works over the integrated path until the bridge is migrated.
+
+A v2 implementation of the bridge already exists in `esp_firmware/serial_bridge_cpp_reference/` (it differs from the working package in two files: `frame_parser.hpp` and `serial_bridge_node.cpp`). It is **not built by colcon**, because the whole `esp_firmware/` tree is excluded by `COLCON_IGNORE`; it also declares the same package name `serial_bridge_cpp`, so it must be renamed when moved into the workspace root, and its gtest suite still covers only v1 frames.
+
+Target state after the migration: `/cmd_vel` emits `$101;v;w;#`; the bridge accepts `$301;...;#` for `/odom`, `/sensors/wheel/*/speed` and TF, and `$202;...;#` for `/PIDcoeffs`. `serial/cmd` remains a low-level raw-frame topic, so existing external publishers must update their IDs. `serial/feedback` keeps raw telemetry. Other incoming frames currently appear as unexpected messages; structured ROS publishers for diagnostics are a follow-up.
+
+The same v1 dependency affects the user-facing tools: `web_regulators_configurator` and `simple_PID_configurator` still emit v1 IDs (`$1`..`$5`) and parse feedback as type `1`/`2`, so they are incompatible with a v2 firmware.
 
 ## Safety
 
-There is NO hardware motor power disconnect/enable. Software stop sets a zero target but cannot guarantee physical braking or de-energization in the presence of processor/I2C/PCA9685 failure. Do not run unattended; bench test with wheels lifted first. A hardware enable / independent motor power cut is recommended for physical safety. Motion watchdog updates only on structurally valid motion commands, not queries. **Current limitation:** a syntactically valid but semantically rejected command may still refresh the watchdog; track as a priority follow-up.
+There is NO hardware motor power disconnect/enable. Software stop sets a zero target but cannot guarantee physical braking or de-energization in the presence of processor/I2C/PCA9685 failure. Do not run unattended; bench test with wheels lifted first. A hardware enable / independent motor power cut is recommended for physical safety.
+
+Motion watchdog updates only on structurally valid motion commands (IDs 101, 102, 104), not on queries. The order of checks in the receive path is: shape validation → safety/finite-value validation → **only then** the watchdog timestamp is refreshed. A command that is rejected by either of the first two checks therefore does **not** refresh the watchdog, and the motion timeout still applies.
+
+**Current limitation (residual defect, not fixed):** the motion-value validation checks only the argument count and finiteness — it does **not** check the value range. A command with a finite but out-of-range value (for example `104;5.0;5.0;#`) is accepted, **does** refresh the watchdog, and is silently clipped later in the motor controller (`duty` to [-1, 1], wheel speeds to ±0.8·max wheel speed). Range checking remains a priority follow-up.
 
 ## v2.1 read-only API extension
 
@@ -75,3 +105,21 @@ Existing 101/103/202/301 IDs and payloads remain unchanged for hardware regressi
 Request `$405;#` produces `$405;ina_state;ina_failures;ina_attempts;ina_recoveries;pwm_state;pwm_failures;pwm_attempts;pwm_recoveries;oled_state;oled_failures;oled_attempts;oled_recoveries;#`.
 
 All twelve fields are unsigned decimal integers. Devices are ordered **INA219, PCA9685, OLED**. States: `0` not detected at startup, `1` healthy, `2` probe/recovery fault, `3` recovered. Counters accumulate since boot and saturate at `4294967295`. The response is best-effort and can be dropped if UART TX space is insufficient. A read adds no I2C operations and does not change NVS, PWM, watchdog or settings. I2C ACK alone cannot prove that output pins or motor power are safe.
+
+## Versioning
+
+The project currently carries **three independent version axes**. They are not interchangeable, and mixing them is the source of most version confusion in this repository.
+
+| Axis | Where it is defined | Current value | Meaning |
+|---|---|---|---|
+| Protocol version | Response to `$501;#` (`protocol_wrapper.cpp`) | `2;2` (major 2, minor 2) | Version of the **wire contract** described in this document. It was bumped to 2.1 with the read-only API and to 2.2 with transactional PID. |
+| Firmware build version | `VERSION` constant in `esp32_firmware.ino` | `2.4.0` | Version of the **firmware build**. It is shown on the OLED / startup output, but it is **not** transmitted over UART — `$501` reports the protocol version, not the build. |
+| Documentation revision | Section headings in `esp_firmware/README.md`, entries in `esp_firmware/CHANGELOG.rst` | README up to v2.3.3; CHANGELOG last numbered entry 2.2.0 (2026-10-25) plus an «Unreleased» section covering the v2 line | History of the incremental firmware/protocol work. |
+
+Known inconsistencies, recorded rather than silently resolved:
+
+1. **The source comment contradicts the emitted value.** The firmware emits `$501;2;2;#`, but the comment on the same source line says `// major=2, minor=1`. The emitted value is authoritative; the comment is stale.
+2. **The firmware build version does not reflect the v2 work in this branch.** `VERSION = "2.4.0"` was inherited from an earlier commit on `main` and was not bumped while the protocol v2 line was developed. Consequently "2.4.0", "2.2" and "v2.3.3" refer to three different axes and must not be compared directly.
+3. **The protocol version was not bumped for v2.3.x features.** The read-only I2C snapshot (`405`) was added in the v2.3.3 documentation revision, while `$501` still reports `2;2`.
+
+Practical consequence for integrators: to identify what is running on a device, query `$501;#` — this yields the protocol contract version only. There is currently **no way to read the firmware build version over UART**, so an on-device build cannot be confirmed from the Jetson side. Aligning the three axes (or documenting them explicitly as independent) is an open decision recorded in `docs/ai/decisions.md` (ADR-015).
