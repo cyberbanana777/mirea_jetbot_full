@@ -211,14 +211,14 @@ public:
 
   float speed() const { return _filt; }
 
-  // Отладка (команда $18): выравнивание окна по меткам на ходу
+  // Отладка (команда $404): выравнивание окна по меткам на ходу
   void setAlignQuad(bool on) {
     _p.alignQuad = on;
     _valid = false;
   }
   bool alignQuad() const { return _p.alignQuad; }
 
-  // Отладка (команда $18): сменить окно оценки на ходу. Следующий вызов update() начнёт окно заново.
+  // Отладка (команда $404): сменить окно оценки на ходу. Следующий вызов update() начнёт окно заново.
   void setMinEdges(int32_t n) {
     _p.minEdges = (n < 1) ? 1 : n;
     _valid = false;

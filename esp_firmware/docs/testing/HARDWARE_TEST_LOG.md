@@ -90,11 +90,32 @@ odometry frames before STOP, 101 after STOP, unchanged six PID coefficients,
 zero host decode errors, and PASS. This does **not** prove zero PWM or physical
 motor stop.
 
-## Batch suite — pending execution
+## Batch suite — 11 runs on hardware (2026-11-02), firmware build unidentified
 
-`tools/uart_bench/hardware_suite.py` runs existing non-motion checks in one
-serial session and creates reports in `reports/`. Its result has not yet been
-measured on hardware.
+`tools/uart_bench/hardware_suite.py` runs the non-motion checks in one serial
+session and writes timestamped JSON, CSV and Markdown reports. The archived
+reports (`archive/reports/`) show that the suite **was executed on hardware**:
+11 runs on 2026-11-02, port `/dev/ttyUSB0`, 115200 baud, 2.5 s per phase.
+
+| Runs | Checks | Result |
+|---|---|---|
+| 10 (223041Z … 232318Z) | 7 | 7/7 PASS in every run |
+| 1 (233445Z) | 8 | 8/8 PASS (adds `UART-I2C-DIAG-001`) |
+
+No check failed in any of the runs. The PID coefficients read back were
+identical in all of them: `[0.951, 5.475, 0.0, 1.426, 10.009, 0.0]`.
+
+**What these runs do not prove.** The firmware build is not identified: the
+commit and the build options were not recorded, and every run reports the
+protocol version as `2;0` (`$501`), whereas the current firmware emits
+`$501;2;2;#`. The runs therefore validate an **older** build and must not be
+cited as validation of the current firmware. The suite itself states its
+limits in every report (verbatim from the JSON): no physical PWM measurement,
+host receive timestamps do not measure ESP32 scheduler jitter, no NVS writes
+and no motor movement.
+
+To close this gap, record before each run in this log: the firmware commit,
+the build options and the `$501` response of the flashed image.
 
 ### v2.2.1 dispatch-only refactor — pending hardware validation
 

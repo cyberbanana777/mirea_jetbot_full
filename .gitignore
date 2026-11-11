@@ -16,3 +16,21 @@ jetbot_telemetria.timer
 esp_firmware/tools/host_test/test_protocol_v2
 esp_firmware/tools/host_test/test_bridge_v2
 esp_firmware/tools/host_test/test_end_to_end_v2
+esp_firmware/tools/host_test/test_glue
+esp_firmware/tools/host_test/test_estimator*
+esp_firmware/tools/host_test/test_encoders_equiv
+esp_firmware/tools/host_test/sim_*
+esp_firmware/tools/host_test/*.o
+esp_firmware/tools/host_test/trace_new.csv
+!esp_firmware/tools/host_test/*.cpp
+!esp_firmware/tools/host_test/*.h
+
+# Логи и графики стендовых прогонов (генерируются tools/mtcal.py, noisetest.py, steptest.py
+# в текущий рабочий каталог — это может быть и esp_firmware/, и esp_firmware/tools/)
+esp_firmware/**/*_log*.csv
+esp_firmware/**/s_l*.csv
+esp_firmware/**/odometry.csv
+esp_firmware/**/*_plot*.png
+# Новые прогоны стенда — только в esp_firmware/reports/; архивные отчёты в
+# esp_firmware/archive/reports/ отслеживаются и под это правило не попадают.
+esp_firmware/reports/

@@ -98,6 +98,7 @@ Arduino sketch: 17 `.cpp`, 23 `.h`, 1 `.ino`. Собирается Arduino IDE /
 | ~~`esp_firmware/jetbot_stats.py`~~ | Отдельный Serial1-канал (`$6;ssid;пароль;ip;#`) | **Удалён в Этапе 2** по решению владельца: побайтовый дубликат `init_scripts/jetbot_stats/jetbot_stats.py`, ссылок не было. Сам скрипт и его канал Serial1 не изменялись |
 | ~~`simple_PID_configurator/`~~ | GUI-настройка ПИ (Tkinter / PySide2) + ROS-узел | **Удалён в Этапе 2** (ADR-017): протокол v1, дублировал `web_regulators_configurator` |
 | ~~`esp_firmware/serial_bridge_cpp_reference/`~~ | Копия моста с миграцией на v2 | **Удалена в Этапе 2**: дубликат имени пакета `serial_bridge_cpp`; v2-логика перенесена в рабочий пакет |
+| `esp_firmware/archive/` | Исторические материалы, не собираются и не тестируются | Создан в Этапе 5: `esp32_firmware_old/` (монолитная прошивка v1), `Speed_for_PID_test_speed*/` (скетчи Arduino), `reports/` (11 прогонов стенда 2026-11-02). Правила — в `archive/README.md` |
 | `docs/` | Даташиты, инструкции (PDF/DOCX), схемы, фото (~52 МБ) | `docs/ai/` — архитектурная память (создана этим анализом) |
 
 ### 2.3. Инфраструктура

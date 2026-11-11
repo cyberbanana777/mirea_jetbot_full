@@ -82,5 +82,6 @@ test: all
 
 clean:
 	rm -f test_glue test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_protocol_v2 test_bridge_v2 test_end_to_end_v2 trace_new.csv
-	# enc_new.o и enc_old.o не удаляем: они отслеживаются в git и служат
-	# предустановленными объектами для test_encoders_equiv.
+	# Объектные файлы — обычные артефакты сборки, они пересобираются
+	# автоматически (uPID для encoders.cpp не требуется) и в git не хранятся.
+	rm -f enc_new.o enc_old.o

@@ -2,6 +2,8 @@
 
 This package focuses on **ESP32 + Python UART bench tests**. ROS 2 is **not needed**. The v2 bridge implementation that used to live here as `serial_bridge_cpp_reference/` has been merged into the working `serial_bridge_cpp` package at the repository root and the copy was removed. The `jetbot_stats.py` copy that used to live here was a byte-identical duplicate of `init_scripts/jetbot_stats/jetbot_stats.py` and has been removed; the script itself is unchanged and uses **Serial1**, a separate channel (not the main UART).
 
+Historical material that is not built and not tested was moved to `archive/`: the old monolithic v1 firmware, two Arduino encoder-probe sketches and the 2026-11-02 hardware bench reports. See `archive/README.md`.
+
 ## Versioning and branch status
 
 The project carries **three independent version axes**; they are not comparable with each other (details in `PROTOCOL.md`, section «Versioning»):
@@ -76,9 +78,11 @@ non-motion tests. Stop other clients of the same serial port first.
 python3 tools/uart_bench/hardware_suite.py --port /dev/ttyUSB0 --duration 2.5 --output reports/
 ```
 
-Reports are timestamped JSON, CSV, and Markdown in `reports/` (add them to git
-only when desired). A FAIL exits 1; device/port errors exit 2. To avoid
-resending deliberately malformed frames, add `--no-malformed`.
+Reports are timestamped JSON, CSV, and Markdown in `reports/`; that directory is in
+`.gitignore`, so fresh runs stay out of the repository. A FAIL exits 1;
+device/port errors exit 2. To avoid resending deliberately malformed frames,
+add `--no-malformed`. Reports worth keeping as evidence are moved to
+`archive/reports/` explicitly and recorded in `docs/testing/HARDWARE_TEST_LOG.md`.
 
 This suite **does not** measure PCA9685 PWM pins, motor torque, ESP32 scheduler
 jitter, hardware watchdog behavior, or NVS persistence. No motor motion test

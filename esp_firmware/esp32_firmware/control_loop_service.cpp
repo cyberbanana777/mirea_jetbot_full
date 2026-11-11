@@ -37,7 +37,7 @@ float ControlLoopService::convertTicksToDistance(long ticks, char dir)
 
 /**
  * @brief Один такт контура скорости (100 Гц): оценка скорости колёс по фронтам
- * энкодеров и обновление регуляторов (feedforward + ПИ или LADRC, см. $15).
+ * энкодеров и обновление регуляторов (feedforward + ПИ или LADRC, см. $208).
  */
 void ControlLoopService::controlStep()
 {

@@ -53,11 +53,11 @@ void StartupService::begin()
   ctx_.flashStorage.loadFF(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
   ctx_.controller.setFeedforward(FF_GAIN_L, FF_DEADZONE_L, FF_GAIN_R, FF_DEADZONE_R);
 
-  // Фильтр уставки: значение из config.h, если не менялось командой $14 с сохранением
+  // Фильтр уставки: значение из config.h, если не менялось командой $207 с сохранением
   ctx_.flashStorage.loadRefTau(REF_TAU_S);
   ctx_.controller.setRefFilter(REF_TAU_S);
 
-  // Регулятор (ПИ или LADRC) и параметры LADRC: значения из config.h, если не сохранялись ($15/$16)
+  // Регулятор (ПИ или LADRC) и параметры LADRC: значения из config.h, если не сохранялись ($208/$203)
   ctx_.flashStorage.loadAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, ADRC_FF);
   ADRC_FF = constrain(roundf(ADRC_FF), 0.0f, 2.0f);
   ctx_.controller.setAdrc(ADRC_WC, ADRC_WO, ADRC_B0_L, ADRC_B0_R, (uint8_t)ADRC_FF);

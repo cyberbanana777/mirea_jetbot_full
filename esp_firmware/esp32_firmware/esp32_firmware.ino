@@ -83,7 +83,7 @@ const MTSpeedParams SPEED_PARAMS = {1.0f / ENC_EDGES_PER_REV, SPEED_TIMEOUT_US,
 MTSpeedEstimator speedR(SPEED_PARAMS);
 MTSpeedEstimator speedL(SPEED_PARAMS);
 
-// Телеметрия контура скорости ($12): включается командой, гаснет без связи
+// Телеметрия контура скорости ($403): включается командой, гаснет без связи
 bool telemetry_on = false;
 uint8_t telemetry_div = 0;
 
@@ -103,8 +103,8 @@ ControlLoopContext controlLoopContext = {
 };
 ControlLoopService controlLoop(controlLoopContext);
 
-// Сеть Jetson Nano из сообщения $6 (только для показа на OLED-дисплее;
-// сама ESP32 к Wi-Fi не подключается)
+// Сеть Jetson Nano из сообщения $6 отдельного канала Serial1 (не основной UART;
+// только для показа на OLED-дисплее; сама ESP32 к Wi-Fi не подключается)
 String wifi_ssid = "";
 String wifi_password = "";
 String wifi_ip = "";

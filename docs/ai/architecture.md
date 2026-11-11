@@ -75,11 +75,14 @@ STOP не подтверждён независимой проверкой ну�
 `esp_firmware/esp32_firmware/` — Arduino sketch: 17 `.cpp`, 23 `.h`, 1 `.ino`
 (41 файл). **[Код]**
 
-Внутри `esp_firmware/` дополнительно лежат: `esp32_firmware_old/` (старые `.ino`),
-`Speed_for_PID_test_speed*.ino`, `tools/host_test/` (хостовые тесты регулятора и
-эквивалентности энкодеров), `tools/uart_bench/` (эталонный Python-кодек протокола и
-аппаратные скрипты), `tools/{adrc,console,mtcal,steptest}.py` (**на старых ID v1**,
-несовместимы с v2), `docs/audits/`, `docs/testing/`, `reports/`. **[Код]**
+Внутри `esp_firmware/` дополнительно лежат: `tools/host_test/` (хостовые тесты
+регулятора и эквивалентности энкодеров), `tools/uart_bench/` (эталонный
+Python-кодек протокола и аппаратные скрипты), `tools/{adrc,console,mtcal,steptest}.py`
+(**переведены на v2 в Этапе 2**), `docs/audits/`, `docs/testing/`.
+
+Исторические материалы вынесены в `esp_firmware/archive/` (Этап 5) и в сборке не
+участвуют: `esp32_firmware_old/` (монолитная прошивка v1), `Speed_for_PID_test_speed*/`
+(скетчи Arduino), `reports/` (11 прогонов стенда 2026-11-02). **[Код]**
 
 ---
 
