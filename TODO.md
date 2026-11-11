@@ -255,11 +255,11 @@ C++-пакеты `serial_bridge_cpp` и `lidar_filter_cpp`. Пакет `realsens
   `rviz_and_robot_descriptin.launch.py` (надо `description`). С такими
   именами команды не запустятся.
 - [ ] Методичка R3 и `2_jetbot_drivers` (глава «simple_PID_configurator»):
-  `pip install -r pip_requirements.txt` и `python3 fast_gui.py`. В папке
-  `simple_PID_configurator` таких файлов нет, есть `pip_requirements_tk.txt`
-  / `pip_requirements_pyside.txt` и `fast_gui_tk.py` / `fast_gui_pyside.py`.
-  Ещё в `config.py` по умолчанию стоит `SERIAL_PORT = '/dev/ttyUSB0'`, а в R3
-  показан `'/dev/esp32'`.
+  `pip install -r pip_requirements.txt` и `python3 fast_gui.py`. **Снято:** пакет
+  `simple_PID_configurator` удалён в Этапе 2 (ADR-017), вместе с GUI на Tkinter и
+  PySide; настройка ПИД выполняется веб-настройщиком
+  `web_regulators_configurator` (`http://<IP робота>:8080`). Главу методички
+  нужно переписать под веб-интерфейс.
 - [ ] `3_Доп_ПО`, «Launch-файл rviz_and_robot_description.launch.py»:
   написано, что он запускает `jetbot_mirea_rviz.launch.py`. Такого файла нет,
   на самом деле подключается `jetbot_mirea_description/launch/real_robot.launch.py`.
@@ -278,7 +278,7 @@ C++-пакеты `serial_bridge_cpp` и `lidar_filter_cpp`. Пакет `realsens
 протокол ESP32); `docs/Полезные ссылки.xlsx`.
 
 - R1: ожидаемые топики (`/scan`, `/odom`, `/cmd_vel`) остались прежними.
-- R3: `simple_PID_configurator` работает с портом напрямую, без ROS, поэтому
-  замена пакетов его не касается. Как и раньше, его нельзя запускать
-  одновременно с `jetbot_sensors_and_motors.launch.py`: порт `/dev/esp32` будет
-  занят.
+- R3: **перестал быть актуальным** — `simple_PID_configurator` удалён в Этапе 2
+  (ADR-017). Настройка ПИД выполняется веб-настройщиком
+  `web_regulators_configurator`, который работает через `serial_bridge_cpp`
+  (`/low_level/serial/cmd`) и порт напрямую не занимает.

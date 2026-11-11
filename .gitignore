@@ -11,3 +11,8 @@ teleop*
 
 jetbot_telemetria.service
 jetbot_telemetria.timer
+
+# Сборка host-тестов прошивки (артефакты make в tools/host_test)
+esp_firmware/tools/host_test/test_protocol_v2
+esp_firmware/tools/host_test/test_bridge_v2
+esp_firmware/tools/host_test/test_end_to_end_v2

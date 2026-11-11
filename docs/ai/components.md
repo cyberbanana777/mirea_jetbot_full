@@ -93,10 +93,11 @@ Arduino sketch: 17 `.cpp`, 23 `.h`, 1 `.ino`. Собирается Arduino IDE /
 
 | Каталог | Роль | Примечание |
 |---|---|---|
-| `simple_PID_configurator/` | GUI-настройка ПИ (Tkinter / PySide2) + ROS-узел; публикует в `/low_level/serial/cmd` | `COLCON_IGNORE`, без `package.xml`, README отсутствует |
 | `init_scripts/` | udev-симлинки, `jetbot_stats` (отдельный Serial1 `$6;...`), служебные скрипты | `COLCON_IGNORE`, без `package.xml` |
-| `esp_firmware/tools/` | Хостовые тесты, UART-бенчмарки, калибровочные скрипты | `adrc/console/mtcal/steptest.py` — **на ID v1**, несовместимы с v2 |
-| `esp_firmware/serial_bridge_cpp_reference/` | Копия моста с миграцией на v2 | Под `esp_firmware/COLCON_IGNORE` → colcon не собирает; `package.xml` с тем же именем `serial_bridge_cpp` → конфликт при переносе в корень workspace |
+| `esp_firmware/tools/` | Хостовые тесты, UART-бенчмарки, калибровочные скрипты | `adrc/console/mtcal/noisetest/steptest.py` и `README_speed.md` переведены на v2 (Этап 2); `host_test/test_glue.cpp` тоже на v2, но собирается лишь при наличии `uPID` |
+| ~~`esp_firmware/jetbot_stats.py`~~ | Отдельный Serial1-канал (`$6;ssid;пароль;ip;#`) | **Удалён в Этапе 2** по решению владельца: побайтовый дубликат `init_scripts/jetbot_stats/jetbot_stats.py`, ссылок не было. Сам скрипт и его канал Serial1 не изменялись |
+| ~~`simple_PID_configurator/`~~ | GUI-настройка ПИ (Tkinter / PySide2) + ROS-узел | **Удалён в Этапе 2** (ADR-017): протокол v1, дублировал `web_regulators_configurator` |
+| ~~`esp_firmware/serial_bridge_cpp_reference/`~~ | Копия моста с миграцией на v2 | **Удалена в Этапе 2**: дубликат имени пакета `serial_bridge_cpp`; v2-логика перенесена в рабочий пакет |
 | `docs/` | Даташиты, инструкции (PDF/DOCX), схемы, фото (~52 МБ) | `docs/ai/` — архитектурная память (создана этим анализом) |
 
 ### 2.3. Инфраструктура
@@ -130,11 +131,12 @@ CMake, ни к скриптам — grep по репозиторию пуст. *
 
 | Тест | Расположение | Состояние |
 |---|---|---|
-| `test_covariance`, `test_frame_parser` | `serial_bridge_cpp/test/` | gtest через `ament_add_gtest`; **не запускались** — gtest/colcon/ROS 2 отсутствуют |
+| `test_covariance`, `test_frame_parser`, `test_protocol` | `serial_bridge_cpp/test/` | gtest через `ament_add_gtest`; `test_frame_parser` и `test_protocol` переведены на v2; реальный gtest/colcon/ROS 2 отсутствуют — прогон через временную шиму gtest в `/tmp` |
 | `test_sector` | `lidar_filter_cpp/test/` | то же |
-| `test_frame_parser`, `test_covariance` | `esp_firmware/serial_bridge_cpp_reference/test/` | копия рабочих тестов; набор для v2 не мигрирован |
 | `test_geometry.py` | `area_patrol/test/` | pytest-стиль: 7 passed через корректный harness |
-| `test_protocol.py`, `test_telemetry.py`, `test_step_test.py` | `web_regulators_configurator/test/` | pytest-стиль: 7 + 4 + 5 = 16 passed через harness |
+| `test_protocol.py`, `test_telemetry.py`, `test_step_test.py` | `web_regulators_configurator/test/` | pytest-стиль: 9 + 4 + 5 = 18 passed через harness (после миграции на v2) |
+| `test_protocol_v2`, `test_bridge_v2`, `test_end_to_end_v2` | `esp_firmware/tests/` | host-тесты без ROS; подключены к `tools/host_test/Makefile` (цель `test_protocol`) → exit 0. `test_end_to_end_v2` дополнительно проверяет контракт кадров из `test_glue.cpp` |
+| `test_glue.cpp` | `esp_firmware/tools/host_test/` | Сквозной тест на заглушках Arduino; мигрирован на v2, но **не собирается** без `uPID` (R-12) |
 | `uart_bench` (31 тест) | `esp_firmware/tools/uart_bench/` | `python3 -m unittest discover` → **Ran 31 tests, OK** |
 
 Примечание: pytest-файлы при прямом `python3 file.py` дают пустой вывод и exit 0 —

@@ -343,7 +343,8 @@ function appendLog(entries) {
   const showOdom = $('log-odom').checked;
   const frag = document.createDocumentFragment();
   for (const [t, dir, text] of entries) {
-    if (dir === 'rx' && !showOdom && text.startsWith('$1;')) continue;
+    // Одометрия $301 идёт непрерывно: без галочки «лог одометрии» её прячем.
+    if (dir === 'rx' && !showOdom && text.startsWith('$301;')) continue;
     const line = document.createElement('div');
     line.className = 'log-line ' + dir;
     const ts = document.createElement('span'); ts.className = 't'; ts.textContent = t.toFixed(2);

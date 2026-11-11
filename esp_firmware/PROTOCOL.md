@@ -59,24 +59,28 @@ The `2xx` range is the **configuration family in both directions** (SET and GET 
 
 ### ROS 2
 
-**Current state (as of the `fix/esp32_firmware` branch): the ROS-side migration to v2 is NOT complete.** The firmware implements only v2, but the working `serial_bridge_cpp` package at the repository root is still on **v1**:
+**Current state (as of the `fix/esp32_firmware` branch): the ROS-side migration to v2 is COMPLETE.** The `serial_bridge_cpp` package at the repository root is on **v2**:
 
-- it emits `$1;<linear>;<angular>;#` for `/cmd_vel` — the firmware rejects this ID as unknown;
-- it expects feedback frame type `1` (odometry) and type `2` (PID) — the firmware emits `301` and `202`, so they are logged as unexpected frames.
+- it emits `$101;<linear>;<angular>;#` for `/cmd_vel`;
+- it accepts feedback frame type `301` (odometry, 8 fields) and type `202` (PID, 7 fields).
 
-As a consequence neither motion nor odometry works over the integrated path until the bridge is migrated.
+The v2 implementation was developed in a separate copy under `esp_firmware/serial_bridge_cpp_reference/`, then merged into the working package and the copy was removed (it declared the same package name `serial_bridge_cpp`, which would have collided with the working package). The merged code adds: `std::isfinite` checks in the frame parser (`nan` / `inf` are rejected), validation of the message ID (integer in `0..999`), an **exact** (not "at least") field count per frame type, and a `/cmd_vel` idle timer that sends `$103;#` (see below).
 
-A v2 implementation of the bridge already exists in `esp_firmware/serial_bridge_cpp_reference/` (it differs from the working package in two files: `frame_parser.hpp` and `serial_bridge_node.cpp`). It is **not built by colcon**, because the whole `esp_firmware/` tree is excluded by `COLCON_IGNORE`; it also declares the same package name `serial_bridge_cpp`, so it must be renamed when moved into the workspace root, and its gtest suite still covers only v1 frames.
+The protocol constants live in `serial_bridge_cpp/include/serial_bridge_cpp/protocol.hpp` and are shared with the host test that checks the contract with the firmware (`esp_firmware/tests/test_end_to_end_v2.cpp`).
 
-Target state after the migration: `/cmd_vel` emits `$101;v;w;#`; the bridge accepts `$301;...;#` for `/odom`, `/sensors/wheel/*/speed` and TF, and `$202;...;#` for `/PIDcoeffs`. `serial/cmd` remains a low-level raw-frame topic, so existing external publishers must update their IDs. `serial/feedback` keeps raw telemetry. Other incoming frames currently appear as unexpected messages; structured ROS publishers for diagnostics are a follow-up.
+`serial/cmd` remains a low-level raw-frame topic, so external publishers must use v2 IDs. `serial/feedback` keeps raw telemetry. Frames that the ESP32 sends but the bridge does not map to a ROS topic yet (`$203`, `$205`, `$207`, `$211`, `$401`, `$402`, `$404`, `$405`, `$501`, `$502`, `$503`) are logged at DEBUG level instead of being reported as errors; structured ROS publishers for diagnostics are a follow-up.
 
-The same v1 dependency affects the user-facing tools: `web_regulators_configurator` and `simple_PID_configurator` still emit v1 IDs (`$1`..`$5`) and parse feedback as type `1`/`2`, so they are incompatible with a v2 firmware.
+**The `/cmd_vel` idle timer.** The bridge stops the robot if no twist arrives on `/cmd_vel` for `cmd_vel_timeout` seconds (0.5 s by default, `0` disables it) and sends `$103;#`. The timer is edge-triggered: it fires once per silence period and is re-armed by the next `/cmd_vel` message. Raw motion frames from other publishers of `serial/cmd` (`$101`, `$102`, `$104`) cancel the timer, because those publishers are responsible for stopping the robot themselves. The ESP32 watchdog (1 s) remains the backstop: `$103` does not refresh it.
+
+The user-facing tool `web_regulators_configurator` is on v2 as well. The former `simple_PID_configurator` (v1-only, GUI + ROS node) was removed, because `web_regulators_configurator` covers its functionality and works with a v2 firmware.
 
 ## Safety
 
 There is NO hardware motor power disconnect/enable. Software stop sets a zero target but cannot guarantee physical braking or de-energization in the presence of processor/I2C/PCA9685 failure. Do not run unattended; bench test with wheels lifted first. A hardware enable / independent motor power cut is recommended for physical safety.
 
 Motion watchdog updates only on structurally valid motion commands (IDs 101, 102, 104), not on queries. The order of checks in the receive path is: shape validation → safety/finite-value validation → **only then** the watchdog timestamp is refreshed. A command that is rejected by either of the first two checks therefore does **not** refresh the watchdog, and the motion timeout still applies.
+
+**The watchdog also switches telemetry off.** When the host is silent for longer than the watchdog timeout (1000 ms, `emergency_timer_timeout` in `config.h`), the firmware performs an emergency stop and clears the telemetry flag: `safety_manager.cpp` writes `ctx_.telemetryEnabled`, which is a reference to the global `telemetry_on` — the same flag the control loop reads. `$401` frames therefore stop and the odometry frame `$301` takes their place. Telemetry is switched on again only by an explicit `$403;1;#`. A host that merely reads parameters (`$202`, `$206`, `$402`, …) does not refresh the watchdog, so after every silence period it has to send `$403;1;#` again. The bench tools in `esp_firmware/tools/` keep the watchdog alive with a zero motion command while waiting for telemetry.
 
 **Current limitation (residual defect, not fixed):** the motion-value validation checks only the argument count and finiteness — it does **not** check the value range. A command with a finite but out-of-range value (for example `104;5.0;5.0;#`) is accepted, **does** refresh the watchdog, and is silently clipped later in the motor controller (`duty` to [-1, 1], wheel speeds to ±0.8·max wheel speed). Range checking remains a priority follow-up.
 

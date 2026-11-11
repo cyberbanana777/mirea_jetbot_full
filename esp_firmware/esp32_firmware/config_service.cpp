@@ -69,7 +69,7 @@ void handleConfigCommand(const ParsedCommand& cmd, ConfigContext& ctx) {
       break;
 
     case Command::SET_CTRL_MODE:
-      // $15;mode;save#  0 - ПИ, 1 - LADRC. Переключение безударное, можно на ходу
+      // $208;mode;save#  0 - ПИ, 1 - LADRC. Переключение безударное, можно на ходу
       if (cmd.count >= 1 && isfinite(cmd.args[0]))
       {
         ctx.CTRL_MODE = (cmd.args[0] >= 0.5f) ? 1 : 0;
@@ -80,7 +80,7 @@ void handleConfigCommand(const ParsedCommand& cmd, ConfigContext& ctx) {
       break;
 
     case Command::SET_ADRC:
-      // $16;wc;wo;b0_L;b0_R;ff;save#  ff: 0 - без прямой подачи, 1 - мёртвая зона, 2 - полный FF (ff и save необязательны, по умолчанию 0)
+      // $203;wc;wo;b0_L;b0_R;ff;save#  ff: 0 - без прямой подачи, 1 - мёртвая зона, 2 - полный FF (ff и save необязательны, по умолчанию 0)
       if (cmd.count >= 4 && isfinite(cmd.args[0]) && isfinite(cmd.args[1]) &&
           isfinite(cmd.args[2]) && isfinite(cmd.args[3]))
       {
@@ -100,8 +100,8 @@ void handleConfigCommand(const ParsedCommand& cmd, ConfigContext& ctx) {
       break;
 
     case Command::SET_SPEED_WINDOW:
-      // $18;n;align#  окно оценки скорости (отладка шума, tools/noisetest.py), не сохраняется;
-      // n - минимум фронтов (1..8), align - 1: окно из целых меток, 0: как раньше. $18;# - запрос
+      // $404;n;align#  окно оценки скорости (отладка шума, tools/noisetest.py), не сохраняется;
+      // n - минимум фронтов (1..8), align - 1: окно из целых меток, 0: как раньше. $404;# - запрос
       if (cmd.count >= 1 && isfinite(cmd.args[0]))
       {
         const int32_t n = constrain((int32_t)lroundf(cmd.args[0]), (int32_t)1, (int32_t)8);

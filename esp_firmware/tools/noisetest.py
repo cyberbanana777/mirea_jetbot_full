@@ -9,9 +9,9 @@
     python3 noisetest.py fit noise_log.csv                # пересчитать анализ по сохранённому логу
 
 Опыт (разомкнутый контур, регулятор не маскирует шум): для каждого режима оценки скорости
-(--modes, команда $18;n;align#: n - минимум фронтов в окне, align 1 - окно из целых меток,
-0 - прежняя оценка) колёса крутятся на нескольких постоянных скважностях (--duties, команда $10),
-скорость пишется по телеметрии $3.
+(--modes, команда $404;n;align#: n - минимум фронтов в окне, align 1 - окно из целых меток,
+0 - прежняя оценка) колёса крутятся на нескольких постоянных скважностях (--duties, команда $104),
+скорость пишется по телеметрии $401.
 
 Главная метрика - "иглы": 95-й процентиль отклонения от скользящей медианы, выраженный в фронтах
 энкодера за такт. Ошибка положения фронтов (неравномерная квадратура) даёт иглы постоянной
@@ -20,7 +20,7 @@
   * иглы не уменьшились -> не квадратура: смотрите, постоянны ли они в мкс (метки времени)
     или в спектре есть пик на частоте оборота колеса (механика).
 
-Нужна прошивка 2.4.0 с командой $18;n;align# (без неё опыт идёт только с оценкой из config.h).
+Нужна прошивка 2.4.0 с командой $404;n;align# (без неё опыт идёт только с оценкой из config.h).
 Нужны numpy, pyserial (для порта), matplotlib (для графика).
 """
 import argparse
@@ -54,13 +54,13 @@ class NoiseSim(SimLink):
 
     def send(self, text):
         super().send(text)
-        for m in re.finditer(r"\$18;([^#]*)#", text):
+        for m in re.finditer(r"\$404;([^#]*)#", text):
             a = [x for x in m.group(1).split(";") if x]
             if a:
                 self.window = max(1, min(8, int(round(float(a[0])))))
             if len(a) > 1:
                 self.align = 1 if float(a[1]) >= 0.5 else 0
-            self.out.append("$8;%d;%d;#" % (self.window, self.align))
+            self.out.append("$404;%d;%d;#" % (self.window, self.align))
 
     def sleep(self, dt):
         end = self.t + dt
@@ -78,7 +78,7 @@ class NoiseSim(SimLink):
                     w = w * (1 + q + self.mech * math.sin(self.phase[i])) + self.rng.normal(0, 0.001)
                     v.append(w * TWO_PI * self.wheel_r)
                 t_us = int(self.t0_us + self.t * 1e6) % 2 ** 32
-                self.out.append("$3;%d;0.0000;%.4f;%.3f;0.0000;%.4f;%.3f;#" % (t_us, v[0], self.duty[0], v[1], self.duty[1]))
+                self.out.append("$401;%d;0.0000;%.4f;%.3f;0.0000;%.4f;%.3f;#" % (t_us, v[0], self.duty[0], v[1], self.duty[1]))
 
 
 # ----------------------------------------------------------------------------------------------
@@ -95,7 +95,7 @@ def run(link, wheel_r, duties, windows, hold):
             s = tel.parse(ln)
             if s and st["rec"]:
                 log.append((st["win"], st["duty"]) + s)
-            elif ln.startswith("$8;"):
+            elif ln.startswith("$404;"):
                 replies.append(ln)
 
     def idle(dur):
@@ -110,7 +110,7 @@ def run(link, wheel_r, duties, windows, hold):
         last = -1e9
         while link.now() < end:
             if link.now() - last >= 0.1:            # чаще раза в секунду: иначе аварийная остановка
-                link.send("$10;%.4f;%.4f;#\r\n" % (d, d))
+                link.send("$104;%.4f;%.4f;#\r\n" % (d, d))
                 last = link.now()
             link.sleep(0.005)
             pump()
@@ -119,7 +119,10 @@ def run(link, wheel_r, duties, windows, hold):
     try:
         got = False
         for _ in range(10):
-            link.send("$12;1;#\r\n")
+            link.send("$403;1;#\r\n")
+            # Сторожевой таймер прошивки (1 с) выключает телеметрию, если нет
+            # команд движения; держим его живым нулевой скважностью.
+            link.send("$104;0;0;#\r\n")
             st["rec"] = True
             idle(0.4)
             st["rec"] = False
@@ -127,21 +130,21 @@ def run(link, wheel_r, duties, windows, hold):
                 got = True
                 break
         if not got:
-            raise SystemExit("Нет телеметрии $3: проверьте порт и прошивку (python3 console.py --port ...)")
+            raise SystemExit("Нет телеметрии $401: проверьте порт и прошивку (python3 console.py --port ...)")
         log.clear()
         for w in windows:
             n, al = w
             replies.clear()
-            link.send("$18;%d;%d;#\r\n" % (n, al))
+            link.send("$404;%d;%d;#\r\n" % (n, al))
             idle(0.4)
             label = "%d:%d" % (n, al)
             if not replies:
-                ui.warn("Плата не ответила на $18 (прошивка без отладочной команды): режим не меняется, опыт с оценкой из config.h")
+                ui.warn("Плата не ответила на $404 (прошивка без отладочной команды): режим не меняется, опыт с оценкой из config.h")
                 windows = [None]
                 w = None
                 label = "конф."
-            elif replies[-1] != "$8;%d;%d;#" % (n, al):
-                ui.warn("Плата ответила %s, ожидалось $8;%d;%d;# (старая прошивка без выравнивания?)" % (replies[-1], n, al))
+            elif replies[-1] != "$404;%d;%d;#" % (n, al):
+                ui.warn("Плата ответила %s, ожидалось $404;%d;%d;# (старая прошивка без выравнивания?)" % (replies[-1], n, al))
             st["win"] = label
             ui.say("Режим %s (минимум фронтов : целые метки): скважности %s" % (label, ", ".join("%.2f" % d for d in duties)), "bold")
             for d in duties:
@@ -153,13 +156,13 @@ def run(link, wheel_r, duties, windows, hold):
                 break
     finally:
         for _ in range(3):
-            link.send("$10;0;0;#\r\n")
+            link.send("$104;0;0;#\r\n")
             link.sleep(0.05)
-        link.send("$2;0;0;#\r\n")
+        link.send("$103;#\r\n")
         link.sleep(0.05)
-        link.send("$18;2;1;#\r\n")
+        link.send("$404;2;1;#\r\n")
         link.sleep(0.05)
-        link.send("$12;0;#\r\n")
+        link.send("$403;0;#\r\n")
     return log
 
 
@@ -240,7 +243,7 @@ def report(windows, duties, rows):
                           "скользящей медианы. Постоянны в фронтах - квадратура, в мкс - метки времени")
 
     if len(windows) < 2:
-        ui.warn("Режим был один: сравнить нельзя. Нужна прошивка с $18;n;align#.")
+        ui.warn("Режим был один: сравнить нельзя. Нужна прошивка с $404;n;align#.")
         return
     ref = next((w for w in windows if str(w).endswith(":0")), windows[0])
     best = next((w for w in windows if str(w).endswith(":1")), windows[-1])
@@ -346,7 +349,7 @@ def main():
     r.add_argument("--duties", default="0.14,0.2,0.3,0.5",
                    help="скважности через запятую (в воздухе по калибровке: левое ~0.3/0.8/1.6/3.3 об/с, правое ~0.15/0.5/1.0/2.1)")
     r.add_argument("--modes", default="2:0,2:1",
-                   help="режимы оценки скорости 'n:align' через запятую (команда $18): 2:0 - прежняя, 2:1 - целые метки")
+                   help="режимы оценки скорости 'n:align' через запятую (команда $404): 2:0 - прежняя, 2:1 - целые метки")
     r.add_argument("--hold", type=float, default=6.0,
                    help="запись на каждой скважности, с (для спектра нужно хотя бы 2-3 оборота колеса)")
     r.add_argument("--out", default="noise_log.csv")
@@ -380,7 +383,7 @@ def main():
             log = run(link, a.radius, duties, windows, a.hold)
         except KeyboardInterrupt:
             for _ in range(3):
-                link.send("$10;0;0;#\r\n")
+                link.send("$104;0;0;#\r\n")
             raise
         save_csv(log, a.out)
         ui.ok("Лог сохранён: %s (%d отсчётов)" % (a.out, len(log)))

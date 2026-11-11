@@ -23,7 +23,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -44,16 +46,15 @@
 
 #include "serial_bridge_cpp/covariance.hpp"
 #include "serial_bridge_cpp/frame_parser.hpp"
+#include "serial_bridge_cpp/protocol.hpp"
 #include "serial_bridge_cpp/serial_port.hpp"
 
 namespace serial_bridge_cpp
 {
 
-// Message types of the ESP32 protocol (first field of the frame)
-constexpr int MSG_ODOMETRY = 1;   // $1;x;y;theta;v;w;v_left;v_right;#
-constexpr int MSG_PID = 2;        // $2;KpL;KiL;KdL;KpR;KiR;KdR;#
-constexpr std::size_t ODOMETRY_FIELDS = 8;  // type + 7 values
-constexpr std::size_t PID_FIELDS = 7;       // type + 6 values
+// The message IDs, the field layouts and the frame formats live in
+// protocol.hpp: they are shared with the host test that checks the contract
+// with the firmware.
 
 class SerialBridgeNode : public rclcpp::Node
 {
@@ -66,12 +67,16 @@ public:
     frame_id_ = declare_parameter<std::string>("frame_id", "odom");
     child_frame_id_ = declare_parameter<std::string>("child_frame_id", "base_link");
     publish_tf_ = declare_parameter<bool>("publish_tf", true);
-    // Raw frames are only needed by simple_PID_configurator (log window)
+    // Raw frames are only needed by web_regulators_configurator (log window)
     publish_raw_ = declare_parameter<bool>("publish_raw_feedback", true);
     // Text lines from the ESP32 outside of frames (errors, Wi-Fi / OTA messages)
     log_text_ = declare_parameter<bool>("log_text_messages", true);
     reconnect_period_ = std::chrono::duration<double>(
       declare_parameter<double>("reconnect_period", 1.0));
+    // Idle timeout of /cmd_vel: if no twist arrives for that long, the bridge
+    // sends the software stop ($103). 0 disables the timer. The ESP32 has its
+    // own 1 s watchdog, this timer is an earlier and explicit reaction.
+    cmd_vel_timeout_ = declare_parameter<double>("cmd_vel_timeout", 0.5);
     // Diagonals of the odometry covariances (placeholders, see covariance.hpp)
     pose_covariance_ = diagonal_to_covariance(
       declare_parameter<std::vector<double>>(
@@ -102,7 +107,13 @@ public:
       [this](geometry_msgs::msg::Twist::ConstSharedPtr msg) {on_cmd_vel(*msg);});
     raw_cmd_sub_ = create_subscription<std_msgs::msg::String>(
       "serial/cmd", 10,
-      [this](std_msgs::msg::String::ConstSharedPtr msg) {send(msg->data);});
+      [this](std_msgs::msg::String::ConstSharedPtr msg) {on_raw_cmd(msg->data);});
+
+    if (cmd_vel_timeout_ > 0.0) {
+      cmd_vel_timer_ = create_wall_timer(
+        std::chrono::milliseconds(100),
+        [this]() {check_cmd_vel_timeout();});
+    }
 
     reader_ = std::thread([this]() {reader_loop();});
 
@@ -123,12 +134,61 @@ public:
 private:
   void on_cmd_vel(const geometry_msgs::msg::Twist & msg)
   {
-    char buf[64];
-    const int len = std::snprintf(
-      buf, sizeof(buf), "$1;%.3f;%.3f;#", msg.linear.x, msg.angular.z);
-    if (len > 0 && len < static_cast<int>(sizeof(buf))) {
-      send(std::string(buf, static_cast<std::size_t>(len)));
+    // Protocol v2: SET_TWIST is 101. The firmware rejects the v1 ID $1
+    // as unknown, so a v1 bridge cannot move the robot at all.
+    const std::string frame = format_twist(msg.linear.x, msg.angular.z);
+    if (!frame.empty()) {
+      {
+        std::lock_guard<std::mutex> lock(cmd_vel_mutex_);
+        last_cmd_vel_time_ = std::chrono::steady_clock::now();
+        cmd_vel_motion_sent_ = true;
+      }
+      send(frame);
     }
+  }
+
+  // Raw frame from serial/cmd. A raw motion frame ($101, $102, $104) means
+  // that another publisher drives the motors, so the bridge does not stop the
+  // robot on its behalf: that publisher is responsible for the stop.
+  void on_raw_cmd(const std::string & data)
+  {
+    const int id = raw_frame_id(data);
+    if (is_motion_id(id)) {
+      std::lock_guard<std::mutex> lock(cmd_vel_mutex_);
+      last_raw_motion_time_ = std::chrono::steady_clock::now();
+    }
+    send(data);
+  }
+
+  // Sends the software stop once /cmd_vel has been silent for too long.
+  // Edge triggered: the stop is sent once, and is re-armed by the next
+  // /cmd_vel message. The ESP32 watchdog (1 s) is the backstop if the frame
+  // is lost.
+  void check_cmd_vel_timeout()
+  {
+    const auto now = std::chrono::steady_clock::now();
+    double idle = 0.0;
+    {
+      std::lock_guard<std::mutex> lock(cmd_vel_mutex_);
+      if (!cmd_vel_motion_sent_) {
+        return;
+      }
+      // Another publisher drives the motors through serial/cmd: not our case.
+      if (last_raw_motion_time_ > last_cmd_vel_time_) {
+        cmd_vel_motion_sent_ = false;
+        return;
+      }
+      idle = std::chrono::duration<double>(now - last_cmd_vel_time_).count();
+      if (idle <= cmd_vel_timeout_) {
+        return;
+      }
+      cmd_vel_motion_sent_ = false;
+    }
+    RCLCPP_WARN(
+      get_logger(), "No /cmd_vel for %.1f s, sending $103 (stop)", idle);
+    // $103 does not refresh the ESP32 watchdog, so the ESP32 also stops on
+    // its own if the next twist does not arrive.
+    send(format_stop());
   }
 
   void send(const std::string & data)
@@ -225,13 +285,27 @@ private:
       return;
     }
 
+    // The first field is the message ID: it must be a plain integer.
+    if (fields_[0] < 0 || fields_[0] > 999 ||
+      std::floor(fields_[0]) != fields_[0]) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000, "Invalid message ID in frame: %s",
+        frame.c_str());
+      return;
+    }
     const int type = static_cast<int>(fields_[0]);
-    if (type == MSG_ODOMETRY && fields_.size() >= ODOMETRY_FIELDS) {
+    // Exact number of fields: a frame with missing or extra fields does not
+    // match the layout of the firmware and is not applied.
+    if (type == MSG_ODOMETRY && fields_.size() == ODOMETRY_FIELDS) {
       publish_odometry(
         fields_[1], fields_[2], fields_[3], fields_[4], fields_[5]);
       publish_wheel_speeds(fields_[6], fields_[7]);
-    } else if (type == MSG_PID && fields_.size() >= PID_FIELDS) {
+    } else if (type == MSG_PID && fields_.size() == PID_FIELDS) {
       publish_pid(fields_);
+    } else if (is_known_unmapped(type)) {
+      RCLCPP_DEBUG(
+        get_logger(), "Frame %d is not mapped to a ROS topic yet: %s",
+        type, frame.c_str());
     } else {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 5000,
@@ -303,6 +377,8 @@ private:
   bool publish_raw_;
   bool log_text_;
   std::chrono::duration<double> reconnect_period_;
+  // Idle timeout of /cmd_vel, 0 disables the stop timer
+  double cmd_vel_timeout_;
   std::array<double, 36> pose_covariance_;
   std::array<double, 36> twist_covariance_;
 
@@ -316,6 +392,13 @@ private:
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr raw_cmd_sub_;
+  rclcpp::TimerBase::SharedPtr cmd_vel_timer_;
+
+  // State of the /cmd_vel idle timer
+  std::mutex cmd_vel_mutex_;
+  std::chrono::steady_clock::time_point last_cmd_vel_time_;
+  std::chrono::steady_clock::time_point last_raw_motion_time_;
+  bool cmd_vel_motion_sent_ = false;
 
   // Serial
   SerialPort port_;

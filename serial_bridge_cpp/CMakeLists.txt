@@ -51,6 +51,8 @@ if(BUILD_TESTING)
   target_include_directories(test_frame_parser PRIVATE include)
   ament_add_gtest(test_covariance test/test_covariance.cpp)
   target_include_directories(test_covariance PRIVATE include)
+  ament_add_gtest(test_protocol test/test_protocol.cpp)
+  target_include_directories(test_protocol PRIVATE include)
 endif()
 
 ament_package()

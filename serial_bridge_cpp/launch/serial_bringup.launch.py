@@ -25,7 +25,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'publish_raw_feedback', default_value='true',
             description='Publish raw frames to serial/feedback '
-                        '(needed for simple_PID_configurator)'),
+                        '(needed for web_regulators_configurator)'),
 
         Node(
             package='serial_bridge_cpp',

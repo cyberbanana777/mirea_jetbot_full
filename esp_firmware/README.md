@@ -1,6 +1,6 @@
 # ESP32 UART bench — protocol v2
 
-This package focuses on **ESP32 + Python UART bench tests**. ROS 2 is **not needed**; `serial_bridge_cpp_reference/` is retained only as source reference, not built or launched. `jetbot_stats.py` is unchanged and uses **Serial1**, a separate channel.
+This package focuses on **ESP32 + Python UART bench tests**. ROS 2 is **not needed**. The v2 bridge implementation that used to live here as `serial_bridge_cpp_reference/` has been merged into the working `serial_bridge_cpp` package at the repository root and the copy was removed. The `jetbot_stats.py` copy that used to live here was a byte-identical duplicate of `init_scripts/jetbot_stats/jetbot_stats.py` and has been removed; the script itself is unchanged and uses **Serial1**, a separate channel (not the main UART).
 
 ## Versioning and branch status
 
@@ -18,11 +18,13 @@ Known inconsistencies, recorded rather than silently resolved:
 - `VERSION = "2.4.0"` was inherited from an earlier commit on `main` and was **not** bumped while the protocol v2 line was developed here, so it does not describe the v2 work in this branch;
 - the protocol version was not bumped for the v2.3.x features, so `$501` still reports `2;2` although `$405` (read-only I2C snapshot) exists.
 
-**ROS 2 bridge migration is not finished.** The firmware implements only protocol v2, but the working `serial_bridge_cpp` package at the repository root is still on v1: it emits `$1;v;w;#` (rejected by this firmware as an unknown ID) and expects feedback types `1`/`2` while the firmware emits `301`/`202`. As a result neither motion nor odometry works over the integrated path today.
+**ROS 2 bridge migration is finished.** The working `serial_bridge_cpp` package at the repository root is on protocol v2: it emits `$101;v;w;#` for `/cmd_vel` and accepts feedback types `301` (odometry) and `202` (PID). The v2 implementation was developed in a separate copy under `esp_firmware/serial_bridge_cpp_reference/`, then merged into the working package; the copy was removed, because it declared the same package name `serial_bridge_cpp` and would have collided with the working package.
 
-A v2 bridge implementation already exists in `serial_bridge_cpp_reference/` (it differs from the working package in exactly two files: `frame_parser.hpp` and `serial_bridge_node.cpp`). It is **not built by colcon** — the whole `esp_firmware/` tree is excluded by `COLCON_IGNORE` — and it declares the same package name `serial_bridge_cpp`, so it must be renamed when moved into the workspace root. Its gtest suite still covers only v1 frames. The same v1 dependency affects `web_regulators_configurator` and `simple_PID_configurator`, which emit `$1`..`$5` and parse feedback as type `1`/`2`.
+The merge brought: `std::isfinite` checks in the frame parser (`nan` / `inf` are rejected), validation of the message ID (integer in `0..999`), an exact field count per frame type, and a `/cmd_vel` idle timer that sends `$103;#` after `cmd_vel_timeout` seconds (0.5 s by default, `0` disables it). The protocol constants are in `serial_bridge_cpp/include/serial_bridge_cpp/protocol.hpp` and are shared with the host tests.
 
-The host test `tests/test_bridge_v2.cpp` demonstrates the difference: against the working `include/` it fails (the working parser accepts `nan`), against `serial_bridge_cpp_reference/include/` it passes.
+The user-facing tool `web_regulators_configurator` is on v2 as well. The former `simple_PID_configurator` (v1-only) was removed — `web_regulators_configurator` covers its functionality.
+
+The host tests in `tests/` check the contract between the two sides: `test_protocol_v2.cpp` (firmware parser), `test_bridge_v2.cpp` (bridge parser) and `test_end_to_end_v2.cpp` (a bridge frame through the firmware parser and a firmware frame through the bridge parser).
 
 Architecture memory for the whole repository lives in `../docs/ai/` (`architecture.md`, `components.md`, `decisions.md`, `project-state.md`).
 

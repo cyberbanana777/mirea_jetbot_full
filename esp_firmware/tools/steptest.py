@@ -15,7 +15,7 @@
     python3 steptest.py compare step_log_pi.csv step_log_ladrc.csv                     # таблица и график
 
 Для каждой уставки (об/с, оба колеса вперёд): пауза 1.5 с -> ступенька на 2.5 с -> пауза 1.5 с.
-Уставка отправляется командой $2 (м/с), скорости берутся из телеметрии $3.
+Уставка отправляется командой $102 (м/с), скорости берутся из телеметрии $401.
 Печатаются: время выхода на 90%, перерегулирование, время установления +-10%, ошибка в
 установившемся режиме и рябь (СКО / уставка) за последнюю секунду ступеньки, а также синхронность
 колёс: наибольшая разность скоростей |wL - wR| и набег курса из-за неё (база --base).
@@ -60,22 +60,24 @@ class ClosedSim(SimLink):
     def send(self, text):
         for m in __import__("re").finditer(r"\$(\d+);([^#]*)#", text):
             typ, args = int(m.group(1)), [float(x) for x in m.group(2).split(";") if x]
-            self.last_cmd = self.t
-            if typ == 2:
+            # Сторожевой таймер прошивки v2 продлевают только команды движения (101/102/104).
+            if typ in (101, 102, 104):
+                self.last_cmd = self.t
+            if typ == 102:
                 self.ref = [args[0], args[1]]
-            elif typ == 12:
+            elif typ == 403:
                 self.telemetry = args[0] >= 0.5
                 self.next_tel = self.t
-            elif typ == 15 and args:
+            elif typ == 208 and args:
                 self.mode = 1 if args[0] >= 0.5 else 0
-            elif typ == 16 and len(args) >= 4:
+            elif typ == 203 and len(args) >= 4:
                 self.adrc = dict(wc=args[0], wo=args[1], b0L=args[2], b0R=args[3], ff=int(args[4]) if len(args) > 4 else 0)
-            elif typ == 13:
-                self.out += ["$4;%.5f;%.5f;%.5f;%.5f;#" % (self.gain, self.dz, self.gain, self.dz), "$6;0.00000;#",
-                             "$7;%d;%.3f;%.3f;%.4f;%.4f;%d;#" % (self.mode, self.adrc["wc"], self.adrc["wo"],
+            elif typ == 206:
+                self.out += ["$205;%.5f;%.5f;%.5f;%.5f;#" % (self.gain, self.dz, self.gain, self.dz), "$207;0.00000;#",
+                             "$203;%d;%.3f;%.3f;%.4f;%.4f;%d;#" % (self.mode, self.adrc["wc"], self.adrc["wo"],
                                                                  self.adrc["b0L"], self.adrc["b0R"], self.adrc["ff"])]
-            elif typ == 5:
-                self.out.append("$2;%.5f;%.5f;0.00000;%.5f;%.5f;0.00000;#" % (self.kp, self.ki, self.kp, self.ki))
+            elif typ == 202:
+                self.out.append("$202;%.5f;%.5f;0.00000;%.5f;%.5f;0.00000;#" % (self.kp, self.ki, self.kp, self.ki))
 
     def _ladrc(self, i, r, v, h=0.01):
         p = self.adrc
@@ -121,7 +123,7 @@ class ClosedSim(SimLink):
 
 
 def run_steps(link, wheel_r, levels, setup=()):
-    """setup - команды настройки перед опытом (по одной, с паузами), например $16 и $15 без сохранения"""
+    """setup - команды настройки перед опытом (по одной, с паузами), например $203 и $208 без сохранения"""
     tel = Telemetry(wheel_r)
     log = []   # (уровень об/с, фаза, t, wL, wR, uL, uR)
     state = {"level": 0.0, "phase": "idle", "last": -1e9}
@@ -133,8 +135,8 @@ def run_steps(link, wheel_r, levels, setup=()):
         for ln in link.poll():
             s = tel.parse(ln)
             if not s and ln:
-                if ln.startswith(("$4;", "$2;", "$6;", "$7;")):
-                    params.append(ln)        # ответы на $13 / $5: их не вытесняют строки одометрии $1
+                if ln.startswith(("$205;", "$202;", "$207;", "$203;")):
+                    params.append(ln)        # ответы на $206 / $202: их не вытесняют строки одометрии $301
                 else:
                     other[:] = (other + [ln])[-5:]
             if s:
@@ -145,7 +147,7 @@ def run_steps(link, wheel_r, levels, setup=()):
         state["last"] = -1e9                     # новую уставку отправить сразу, а не через остаток 0.1 с
         while link.now() < end:
             if link.now() - state["last"] >= 0.1:
-                link.send("$2;%.5f;%.5f;#\r\n" % (v_ms, v_ms))
+                link.send("$102;%.5f;%.5f;#\r\n" % (v_ms, v_ms))
                 state["last"] = link.now()
             link.sleep(0.005)
             pump()
@@ -163,25 +165,29 @@ def run_steps(link, wheel_r, levels, setup=()):
         params.clear()
         for c in setup:
             link.send(c + "\r\n"); idle(0.4)
-        link.send("$13;#\r\n"); idle(0.4)
-        link.send("$5;#\r\n"); idle(0.4)
+        link.send("$206;#\r\n"); idle(0.4)
+        link.send("$202;#\r\n"); idle(0.4)
         for _ in range(10):                      # включаем телеметрию, при неудаче повторяем
-            link.send("$12;1;#\r\n"); idle(0.4)
+            link.send("$403;1;#\r\n")
+            # Сторожевой таймер прошивки (1 с) выключает телеметрию, если нет
+            # команд движения; держим его живым нулевой уставкой.
+            link.send("$102;0;0;#\r\n")
+            idle(0.4)
             if log:
                 break
         if not log:
-            msg = "Нет телеметрии $3: плата не ответила на $12;1;#.\n"
+            msg = "Нет телеметрии $401: плата не ответила на $403;1;#.\n"
             if other:
                 msg += "Плата присылает другое (старая прошивка или не та скорость порта):\n  " + "\n  ".join(other) + "\n"
             else:
                 msg += "От платы ничего не пришло: проверьте порт (не занят ли ROS-узлом) и прошивку 2.4.0.\n"
             raise SystemExit(msg)
-        ui.panel("\n".join(params) if params else "(плата не ответила на $13 и $5)", "Параметры в плате (ответы на $13 и $5)", "blue")
-        p7 = next((adrc.parse7(ln) for ln in params if adrc.parse7(ln)), None)
+        ui.panel("\n".join(params) if params else "(плата не ответила на $206 и $202)", "Параметры в плате (ответы на $206 и $202)", "blue")
+        p7 = next((adrc.parse_adrc(ln) for ln in params if adrc.parse_adrc(ln)), None)
         if p7:
             ui.say(adrc.describe(p7), "bold")
         elif setup:
-            ui.warn("Плата не прислала $7: прошивка без LADRC, команды --mode/--adrc не сработают")
+            ui.warn("Плата не прислала $203: прошивка без LADRC, команды --mode/--adrc не сработают")
         for lev in levels:
             state["level"] = lev
             state["phase"] = "pre"
@@ -193,9 +199,9 @@ def run_steps(link, wheel_r, levels, setup=()):
             state["phase"] = "idle"
     finally:
         for _ in range(3):
-            link.send("$2;0;0;#\r\n")
+            link.send("$102;0;0;#\r\n")
             link.sleep(0.05)
-        link.send("$12;0;#\r\n")
+        link.send("$403;0;#\r\n")
     return log
 
 
@@ -288,7 +294,7 @@ def report(rows, mode=None):
                        hint_slow.get(mode, hint_slow["pi"] + "; у LADRC - " + hint_slow["ladrc"])))
         if r["over"] > LIM_OVER:
             if r["level"] <= 0.1:
-                bad.append("%s: заброс %.0f%% при трогании: трение покоя (колесо трогается при бо́льшей скважности, чем dz); для малых скоростей это ожидаемо, можно поднять dz в $11 на 0.02-0.04" % (tag, r["over"]))
+                bad.append("%s: заброс %.0f%% при трогании: трение покоя (колесо трогается при бо́льшей скважности, чем dz); для малых скоростей это ожидаемо, можно поднять dz в $205 на 0.02-0.04" % (tag, r["over"]))
             else:
                 bad.append("%s: перерегулирование %.0f%%: %s" % (tag, r["over"],
                            hint_over.get(mode, hint_over["pi"] + "; у LADRC - " + hint_over["ladrc"])))
@@ -384,8 +390,8 @@ def main():
     r.add_argument("--levels", default="0.05,0.5,1.5", help="уставки, об/с, через запятую")
     r.add_argument("--boot-wait", type=float, default=5.0, help="пауза после открытия порта на загрузку платы, с (по умолчанию 5)")
     r.add_argument("--out", default=None, help="CSV лога (по умолчанию step_log.csv или step_log_<mode>.csv)")
-    r.add_argument("--mode", choices=("pi", "ladrc"), help="регулятор на время опыта ($15 без сохранения во flash)")
-    r.add_argument("--adrc", help="параметры LADRC на время опыта: wc,wo,b0L,b0R[,ff] ($16 без сохранения)")
+    r.add_argument("--mode", choices=("pi", "ladrc"), help="регулятор на время опыта ($208 без сохранения во flash)")
+    r.add_argument("--adrc", help="параметры LADRC на время опыта: wc,wo,b0L,b0R[,ff] ($203 без сохранения)")
     f = sub.add_parser("fit")
     f.add_argument("csv")
     f.add_argument("--mode", choices=("pi", "ladrc"), help="каким регулятором снят лог (для подсказок)")
@@ -431,7 +437,7 @@ def main():
             ui.warn(n)
         setup.append(adrc.command(p, save=False))
     if a.mode:
-        setup.append("$15;%d;0;#" % (1 if a.mode == "ladrc" else 0))
+        setup.append("$208;%d;0;#" % (1 if a.mode == "ladrc" else 0))
     suffix = ("_" + a.mode) if a.mode else ""
     a.out = a.out or "step_log%s.csv" % suffix
     a.plot = a.plot or "step_plot%s.png" % suffix

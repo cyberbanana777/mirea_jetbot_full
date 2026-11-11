@@ -4,7 +4,7 @@
 """
 LADRC в прошивке: расчёт параметров по калибровке, запись в плату и выбор регулятора (ПИ / LADRC).
 
-    python3 adrc.py fit cal_log.csv                       # b0 по калибровке mtcal, wc/wo, команда $16
+    python3 adrc.py fit cal_log.csv                       # b0 по калибровке mtcal, wc/wo, команда $203
     python3 adrc.py fit cal_log.csv --lambda-s 0.2 --apply --port /dev/ttyUSB0
     python3 adrc.py show --port /dev/ttyUSB0              # что сейчас в плате: регулятор, LADRC, FF, ПИ
     python3 adrc.py mode ladrc --port /dev/ttyUSB0        # переключить на LADRC (и сохранить во flash)
@@ -18,7 +18,7 @@ LADRC в прошивке: расчёт параметров по калибро
       и wo*L <= ~1.5 (L - запаздывание контура из калибровки), иначе шум и раскачка.
   b0  ускорение колеса на единицу скважности, (м/с^2)/1.0 = K/Tm, где K = Kv*2*pi*R (м/с на 1.0).
       Ошибиться лучше в большую сторону: завышенный b0 - медленнее, заниженный - риск раскачки.
-  ff  прямая подача по калибровке feedforward ($11): 0 - нет (чистый LADRC), 1 - мёртвая зона,
+  ff  прямая подача по калибровке feedforward ($205): 0 - нет (чистый LADRC), 1 - мёртвая зона,
       2 - полный статический FF. Наблюдатель оценивает только то, что калибровка не объяснила.
 
 Важно: открытие порта перезагружает плату (DTR). Значения без сохранения во flash после этого
@@ -95,12 +95,13 @@ def equivalent_pi(p, b0):
 
 
 def command(p, save=True):
-    return "$16;%.3f;%.2f;%.4f;%.4f;%d;%d;#" % (p["wc"], p["wo"], p["b0L"], p["b0R"], p["ff"], 1 if save else 0)
+    """SET_ADRC (v2): $203;wc;wo;b0L;b0R;ff;save;#"""
+    return "$203;%.3f;%.2f;%.4f;%.4f;%d;%d;#" % (p["wc"], p["wo"], p["b0L"], p["b0R"], p["ff"], 1 if save else 0)
 
 
-def parse7(line):
-    """$7;mode;wc;wo;b0L;b0R;ff;# -> dict или None"""
-    m = re.search(r"\$7;([^#]*)#", line)
+def parse_adrc(line):
+    """$203;mode;wc;wo;b0L;b0R;ff;# -> dict или None"""
+    m = re.search(r"\$203;([^#]*)#", line)
     if not m:
         return None
     f = [x for x in m.group(1).split(";") if x]
@@ -128,7 +129,7 @@ def print_params(p, title="Параметры LADRC"):
     ui.table(title, [("колесо", "center"), ("wc", "right"), ("wo", "right"), ("b0", "right"),
                      ("Kp экв", "right"), ("Ki экв", "right"), ("Tf, мс", "right")], rows,
              caption="wc, wo - рад/с; b0 - м/с² на 1.0 скважности. lambda = 1/wc = %.3f с; wo*dt = %.2f; прямая подача: %s. "
-                     "Kp/Ki экв - эквивалентный ПИ обратной связи (на м/с, как у $4), Tf - его фильтр"
+                     "Kp/Ki экв - эквивалентный ПИ обратной связи (на м/с, как у $204), Tf - его фильтр"
              % (1.0 / p["wc"], p["wo"] * DT, FF_NAMES.get(p["ff"], "?")))
 
 
@@ -150,8 +151,9 @@ def query(link, cmd, prefixes, wait=0.5, tries=3):
 
 
 def read_params(link):
-    for ln in query(link, "$17;#", ("$7;",)):
-        p = parse7(ln)
+    # REQUEST_ADRC (v2): $209;# -> ответ $203;
+    for ln in query(link, "$209;#", ("$203;",)):
+        p = parse_adrc(ln)
         if p:
             return p
     return None
@@ -166,12 +168,14 @@ def open_link(a):
 
 def cmd_show(a):
     link = open_link(a)
-    lines = query(link, "$13;#", ("$4;", "$6;", "$7;"))
-    lines += query(link, "$5;#", ("$2;",))
-    p = next((parse7(ln) for ln in lines if parse7(ln)), None)
-    ui.panel("\n".join(lines) if lines else "(плата не ответила)", "Ответ платы на $13 и $5", "blue")
+    # REQUEST_FF (v2) $206;# -> $205; (FF), $207; (ref filter), $203; (LADRC)
+    lines = query(link, "$206;#", ("$205;", "$207;", "$203;"))
+    # REQUEST_PID (v2) $202;# -> $202; (6 коэффициентов ПИ)
+    lines += query(link, "$202;#", ("$202;",))
+    p = next((parse_adrc(ln) for ln in lines if parse_adrc(ln)), None)
+    ui.panel("\n".join(lines) if lines else "(плата не ответила)", "Ответ платы на $206 и $202", "blue")
     if p is None:
-        ui.warn("Нет ответа $7: в плате прошивка без LADRC (нужна 2.4.0)")
+        ui.warn("Нет ответа $203: в плате прошивка без LADRC (нужна 2.4.0)")
         return
     ui.say(describe(p), "bold")
     print_params(p)
@@ -180,11 +184,12 @@ def cmd_show(a):
 def cmd_mode(a):
     link = open_link(a)
     m = 1 if a.which == "ladrc" else 0
-    link.send("$15;%d;%d;#\r\n" % (m, 0 if a.no_save else 1))
+    # SET_CTRL_MODE (v2): $208;mode;save;#  0 - ПИ, 1 - LADRC
+    link.send("$208;%d;%d;#\r\n" % (m, 0 if a.no_save else 1))
     link.sleep(0.3)
     p = read_params(link)
     if p is None:
-        sys.exit("Плата не ответила на $17: прошивка без LADRC?")
+        sys.exit("Плата не ответила на $209: прошивка без LADRC?")
     if p["mode"] != m:
         sys.exit("Режим не переключился: плата сообщает %s" % MODE_NAMES.get(p["mode"], "?"))
     ui.ok("Регулятор: %s%s" % (MODE_NAMES[m], "" if a.no_save else " (сохранено во flash)"))
@@ -195,7 +200,7 @@ def cmd_set(a):
     link = open_link(a)
     p = read_params(link)
     if p is None:
-        sys.exit("Плата не ответила на $17: прошивка без LADRC?")
+        sys.exit("Плата не ответила на $209: прошивка без LADRC?")
     if a.lambda_s:
         p["wc"] = 1.0 / a.lambda_s
     if a.wc:
@@ -216,7 +221,7 @@ def cmd_set(a):
     q = read_params(link)
     ui.panel(c, "Отправлено", "green")
     if q is None:
-        sys.exit("Плата не ответила на $17")
+        sys.exit("Плата не ответила на $209")
     ui.say(describe(q), "bold")
     print_params(q, "Параметры LADRC в плате")
 
@@ -236,14 +241,14 @@ def cmd_fit(a):
     for n in notes:
         ui.warn(n)
     c = command(p, True)
-    ui.panel(c + "\n$15;1;1;#", "Команды для платы: параметры LADRC, затем переключение на LADRC (оба с сохранением)", "green")
-    ui.say("Вернуть ПИ: $15;0;1;#  (или python3 adrc.py mode pi --port ...)", "dim")
+    ui.panel(c + "\n$208;1;1;#", "Команды для платы: параметры LADRC, затем переключение на LADRC (оба с сохранением)", "green")
+    ui.say("Вернуть ПИ: $208;0;1;#  (или python3 adrc.py mode pi --port ...)", "dim")
     if a.apply:
         link = open_link(a)
         link.send(c + "\r\n")
         link.sleep(0.3)
         q = read_params(link)
-        ui.say(describe(q) if q else "(плата не ответила на $17)", "bold")
+        ui.say(describe(q) if q else "(плата не ответила на $209)", "bold")
         ui.say("Регулятор не переключён: python3 adrc.py mode ladrc --port %s" % a.port, "dim")
 
 

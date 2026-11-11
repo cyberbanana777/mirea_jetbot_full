@@ -9,6 +9,7 @@
 #define SERIAL_BRIDGE_CPP__FRAME_PARSER_HPP_
 
 #include <cerrno>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <string>
@@ -114,7 +115,7 @@ private:
   bool after_frame_ = false;
 };
 
-// Split a complete frame "$1;0.1;-2.5;#" into numbers {1, 0.1, -2.5}.
+// Split a complete frame "$301;0.1;-2.5;#" into numbers {301, 0.1, -2.5}.
 // Empty fields (e.g. after the trailing ';') are skipped.
 // Returns false if the frame is malformed or a field is not a number.
 inline bool parse_fields(const std::string & frame, std::vector<double> & out)
@@ -135,7 +136,9 @@ inline bool parse_fields(const std::string & frame, std::vector<double> & out)
       errno = 0;
       const double value = std::strtod(p, &num_end);
       // the whole field must be a number: strtod has to stop exactly at ';'/'#'
-      if (num_end != sep || errno == ERANGE) {
+      // nan/inf are rejected as well: the firmware never sends them and they
+      // would silently poison the odometry and the PID coefficients.
+      if (num_end != sep || errno == ERANGE || !std::isfinite(value)) {
         return false;
       }
       out.push_back(value);

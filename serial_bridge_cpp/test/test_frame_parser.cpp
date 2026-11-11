@@ -1,5 +1,10 @@
 // Copyright (c) 2026 Alice Zenina and Alexander Grachev RTU MIREA (Russia)
 // SPDX-License-Identifier: MIT
+//
+// Тесты разбора кадров моста на протоколе v2.
+// Форматы кадров — как в esp_firmware/esp32_firmware/protocol_wrapper.cpp:
+//   $301;x;y;theta;v;w;v_left;v_right;#  — одометрия (8 полей)
+//   $202;KpL;KiL;KdL;KpR;KiR;KdR;#        — коэффициенты PID (7 полей)
 
 #include <gtest/gtest.h>
 
@@ -21,30 +26,30 @@ static std::vector<std::string> feed_all(FrameParser & p, const std::string & da
 TEST(FrameParser, SingleFrameWithCrlf)
 {
   FrameParser p;
-  auto frames = feed_all(p, "$1;0.1;0.2;#\r\n");
+  auto frames = feed_all(p, "$301;0.1;0.2;#\r\n");
   ASSERT_EQ(frames.size(), 1u);
-  EXPECT_EQ(frames[0], "$1;0.1;0.2;#");
+  EXPECT_EQ(frames[0], "$301;0.1;0.2;#");
 }
 
 TEST(FrameParser, FrameSplitBetweenReads)
 {
   FrameParser p;
-  EXPECT_TRUE(feed_all(p, "$1;0.").empty());
+  EXPECT_TRUE(feed_all(p, "$301;0.").empty());
   EXPECT_TRUE(feed_all(p, "123;4").empty());
-  auto frames = feed_all(p, "5;#\r\n$2;");
+  auto frames = feed_all(p, "5;#\r\n$202;");
   ASSERT_EQ(frames.size(), 1u);
-  EXPECT_EQ(frames[0], "$1;0.123;45;#");
+  EXPECT_EQ(frames[0], "$301;0.123;45;#");
   frames = feed_all(p, "1;#");
   ASSERT_EQ(frames.size(), 1u);
-  EXPECT_EQ(frames[0], "$2;1;#");
+  EXPECT_EQ(frames[0], "$202;1;#");
 }
 
 TEST(FrameParser, SeveralFramesInOneRead)
 {
   FrameParser p;
-  auto frames = feed_all(p, "$1;1;#\r\n$1;2;#\r\n$2;3;#");
+  auto frames = feed_all(p, "$301;1;#\r\n$301;2;#\r\n$202;3;#");
   ASSERT_EQ(frames.size(), 3u);
-  EXPECT_EQ(frames[2], "$2;3;#");
+  EXPECT_EQ(frames[2], "$202;3;#");
 }
 
 TEST(FrameParser, GarbageAndBrokenFrame)
@@ -52,44 +57,55 @@ TEST(FrameParser, GarbageAndBrokenFrame)
   FrameParser p;
   // text from the ESP (e.g. "INA219 reinitialized") is ignored,
   // a broken frame without '#' is dropped when a new '$' arrives
-  auto frames = feed_all(p, "INA219 reinitialized\r\n$1;0.5$1;0.7;#");
+  auto frames = feed_all(p, "INA219 reinitialized\r\n$301;0.5$301;0.7;#");
   ASSERT_EQ(frames.size(), 1u);
-  EXPECT_EQ(frames[0], "$1;0.7;#");
+  EXPECT_EQ(frames[0], "$301;0.7;#");
 }
 
 TEST(FrameParser, TooLongFrameDropped)
 {
   FrameParser p(16);
-  auto frames = feed_all(p, "$1;" + std::string(100, '1') + ";#$1;2;#");
+  auto frames = feed_all(p, "$301;" + std::string(100, '1') + ";#$301;2;#");
   ASSERT_EQ(frames.size(), 1u);
-  EXPECT_EQ(frames[0], "$1;2;#");
+  EXPECT_EQ(frames[0], "$301;2;#");
 }
 
 TEST(ParseFields, OdometryFrame)
 {
   std::vector<double> f;
   ASSERT_TRUE(parse_fields(
-      "$1;0.12345;-1.50000;3.14159;0.20000;-0.10000;0.15000;0.25000;#", f));
+      "$301;0.12345;-1.50000;3.14159;0.20000;-0.10000;0.15000;0.25000;#", f));
   ASSERT_EQ(f.size(), 8u);
-  EXPECT_DOUBLE_EQ(f[0], 1.0);
+  EXPECT_DOUBLE_EQ(f[0], 301.0);
   EXPECT_DOUBLE_EQ(f[2], -1.5);
   EXPECT_DOUBLE_EQ(f[7], 0.25);
 }
 
-TEST(ParseFields, PidFrameTrailingSeparator)
+TEST(ParseFields, PidFrame)
 {
   std::vector<double> f;
-  ASSERT_TRUE(parse_fields("$2;0.85000;1.50000;0.05000;0.80000;1.50000;0.04000;#", f));
+  ASSERT_TRUE(parse_fields("$202;0.85000;1.50000;0.05000;0.80000;1.50000;0.04000;#", f));
   EXPECT_EQ(f.size(), 7u);
+  EXPECT_DOUBLE_EQ(f[0], 202.0);
+}
+
+TEST(ParseFields, NonFiniteRejected)
+{
+  // Значения nan/inf не должны попасть в одометрию и ПИД.
+  std::vector<double> f;
+  EXPECT_FALSE(parse_fields("$301;nan;#", f));
+  EXPECT_FALSE(parse_fields("$301;inf;#", f));
+  EXPECT_FALSE(parse_fields("$301;-inf;#", f));
+  EXPECT_FALSE(parse_fields("$202;1;2;3;nan;5;6;#", f));
 }
 
 TEST(ParseFields, Malformed)
 {
   std::vector<double> f;
   EXPECT_FALSE(parse_fields("1;2;#", f));
-  EXPECT_FALSE(parse_fields("$1;2;", f));
-  EXPECT_FALSE(parse_fields("$1;abc;#", f));
-  EXPECT_FALSE(parse_fields("$1;0.5x;#", f));
+  EXPECT_FALSE(parse_fields("$301;2;", f));
+  EXPECT_FALSE(parse_fields("$301;abc;#", f));
+  EXPECT_FALSE(parse_fields("$301;0.5x;#", f));
   EXPECT_FALSE(parse_fields("$#", f));
   EXPECT_FALSE(parse_fields("$;;#", f));
 }
@@ -108,7 +124,7 @@ TEST(FrameParserText, TextLinesBetweenFrames)
 {
   FrameParser p;
   std::vector<std::string> frames, lines;
-  feed_both(p, "$1;1;#\r\nINA219 reinit failed\r\n$1;2;#\r\nWiFi retry, SSID = lab\r\n",
+  feed_both(p, "$301;1;#\r\nINA219 reinit failed\r\n$301;2;#\r\nWiFi retry, SSID = lab\r\n",
     frames, lines);
   ASSERT_EQ(frames.size(), 2u);
   ASSERT_EQ(lines.size(), 2u);
@@ -122,7 +138,7 @@ TEST(FrameParserText, LineSplitBetweenReadsAndAroundFrame)
   std::vector<std::string> frames, lines;
   feed_both(p, "OTA er", frames, lines);
   EXPECT_TRUE(lines.empty());
-  feed_both(p, "ror[2]: $1;5;#\r\nConnect Failed\r", frames, lines);
+  feed_both(p, "ror[2]: $301;5;#\r\nConnect Failed\r", frames, lines);
   EXPECT_TRUE(lines.empty());
   feed_both(p, "\n", frames, lines);
   ASSERT_EQ(frames.size(), 1u);
@@ -152,6 +168,6 @@ TEST(FrameParserText, LongLineEmittedInParts)
 TEST(FrameParserText, FramesOnlyOverloadIgnoresText)
 {
   FrameParser p;
-  auto frames = feed_all(p, "hello\r\n$1;1;#\r\n");
+  auto frames = feed_all(p, "hello\r\n$301;1;#\r\n");
   ASSERT_EQ(frames.size(), 1u);
 }

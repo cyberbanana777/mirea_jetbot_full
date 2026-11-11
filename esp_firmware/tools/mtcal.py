@@ -8,13 +8,13 @@
     python3 mtcal.py run --sim                        # то же на встроенной модели, без железа
     python3 mtcal.py fit cal_log.csv                  # пересчитать результат по сохранённому логу
 
-Что делает `run` (оба колеса одновременно, обороты считаются по телеметрии $3):
+Что делает `run` (оба колеса одновременно, обороты считаются по телеметрии $401):
   A. Плавный подъём скважности ШИМ с шагом 0.01 до страгивания каждого колеса  -> скважность трогания.
   B. Ступеньки скважности 1.0 -> 0.35 вниз: установившиеся скорости, прямая w = Kv*(d - dz)
      даёт мёртвую зону dz и усиление Kv (у feedforward это dz и gain = 1/(Kv*2*pi*R)).
   C. Ступенька скважности внутри рабочей области: постоянная времени Tm и запаздывание L
      (метод двух точек 28.3% / 63.2%) -> коэффициенты ПИ.
-В конце печатаются команды $11 (feedforward) и $4 (ПИ), их можно сразу отправить флагом --apply.
+В конце печатаются команды $205 (feedforward) и $204 (ПИ), их можно сразу отправить флагом --apply.
 
 Нужен только numpy (и pyserial для реального порта).
 """
@@ -29,7 +29,7 @@ import numpy as np
 import ui
 
 TWO_PI = 2.0 * math.pi
-LINE_RE = re.compile(r"\$3;([^#]*)#")
+LINE_RE = re.compile(r"\$401;([^#]*)#")
 
 
 # ----------------------------------------------------------------------------------------------
@@ -61,7 +61,7 @@ class SerialLink:
 
 
 class SimLink:
-    """Модель платы: разомкнутый режим, телеметрия $3 на 100 Гц, аварийная остановка без команд.
+    """Модель платы: разомкнутый режим, телеметрия $401 на 100 Гц, аварийная остановка без команд.
     Параметры двигателя - допущения; нужна, чтобы проверить сам скрипт."""
 
     def __init__(self, wheel_r, seed=1):
@@ -73,7 +73,9 @@ class SimLink:
         self.w = [0.0, 0.0]
         self.meas = [0.0, 0.0]
         self.duty = [0.0, 0.0]
-        self.last_cmd = -1e9
+        # lastMotionMs в прошивке инициализируется нулём, а millis() стартует с 0:
+        # до первой секунды после загрузки хост ещё считается «живым».
+        self.last_cmd = 0.0
         self.telemetry = False
         self.next_tel = 0.0
         self.out = []
@@ -85,16 +87,24 @@ class SimLink:
     def send(self, text):
         for m in re.finditer(r"\$(\d+);([^#]*)#", text):
             typ, args = int(m.group(1)), [float(x) for x in m.group(2).split(";") if x]
-            self.last_cmd = self.t   # как emergency_timer в прошивке: сбрасывается любой командой
-            if typ == 10:
+            # Как в прошивке v2: сторожевой таймер продлевают только команды движения
+            # (101/102/104); запросы и настройки его не сбрасывают.
+            if typ in (101, 102, 104):
+                self.last_cmd = self.t
+            if typ == 104:
                 self.duty = [max(-1.0, min(1.0, args[0])), max(-1.0, min(1.0, args[1]))]
-            elif typ == 12:
+            elif typ == 403:
                 self.telemetry = args[0] >= 0.5
                 self.next_tel = self.t
 
     def _step(self, dt):
         if self.t - self.last_cmd > 1.0:
-            self.duty = [0.0, 0.0]  # аварийная остановка
+            # Аварийная остановка по сторожевому таймеру (1000 мс, commandTimeoutMs).
+            # Телеметрия при этом тоже выключается: safety_manager.cpp пишет
+            # ctx_.telemetryEnabled, а это ссылка на глобальный telemetry_on -
+            # тот же флаг, который читает control_loop_service.cpp. Обратно
+            # телеметрия включается только командой $403;1;#.
+            self.duty = [0.0, 0.0]
             self.telemetry = False
         for i in range(2):
             tm, kv, dz, db = self.p[i]
@@ -117,7 +127,7 @@ class SimLink:
                 self.next_tel += 0.01
                 v = [(m + self.rng.normal(0, 0.002)) * TWO_PI * self.wheel_r for m in self.meas]
                 t_us = int(self.t0_us + self.t * 1e6) % 2 ** 32
-                self.out.append("$3;%d;0.0000;%.4f;%.3f;0.0000;%.4f;%.3f;#" % (t_us, v[0], self.duty[0], v[1], self.duty[1]))
+                self.out.append("$401;%d;0.0000;%.4f;%.3f;0.0000;%.4f;%.3f;#" % (t_us, v[0], self.duty[0], v[1], self.duty[1]))
 
     def poll(self):
         out, self.out = self.out, []
@@ -128,7 +138,7 @@ class SimLink:
 # Разбор телеметрии
 # ----------------------------------------------------------------------------------------------
 class Telemetry:
-    """Разбирает строки $3;t_us;refL;vL;uL;refR;vR;uR;# в обороты в секунду, разворачивая переполнение micros()."""
+    """Разбирает строки $401;t_us;refL;vL;uL;refR;vR;uR;# в обороты в секунду, разворачивая переполнение micros()."""
 
     def __init__(self, wheel_r):
         self.k = 1.0 / (TWO_PI * wheel_r)  # м/с -> об/с
@@ -180,7 +190,7 @@ class Experiment:
         end = self.link.now() + dur
         while self.link.now() < end:
             if self.link.now() - self._last_send >= 0.1:
-                self.link.send("$10;%.4f;%.4f;#\r\n" % (d, d))
+                self.link.send("$104;%.4f;%.4f;#\r\n" % (d, d))
                 self._last_send = self.link.now()
             self.link.sleep(0.005)
             new = self._pump()
@@ -192,13 +202,13 @@ class Experiment:
         L = self.link
         # Команду повторяем до 4 с: первая могла уйти, пока плата ещё загружалась
         for _ in range(8):
-            L.send("$12;1;#\r\n")
+            L.send("$403;1;#\r\n")
             self.hold(0.0, 0.5)
             if self.log:
                 break
         if not self.log:
             other = getattr(self, "other", [])
-            msg = "Нет телеметрии $3: плата не ответила на $12;1;#.\n"
+            msg = "Нет телеметрии $401: плата не ответила на $403;1;#.\n"
             if other:
                 msg += "Плата присылает другое (скорее всего, старая прошивка или не та скорость порта):\n  " + "\n  ".join(other) + "\n"
             else:
@@ -248,9 +258,9 @@ class Experiment:
 
     def _stop(self):
         for _ in range(3):
-            self.link.send("$10;0;0;#\r\n")
+            self.link.send("$104;0;0;#\r\n")
             self.link.sleep(0.05)
-        self.link.send("$12;0;#\r\n")
+        self.link.send("$403;0;#\r\n")
 
 
 # ----------------------------------------------------------------------------------------------
@@ -393,8 +403,8 @@ def report(log, wheel_r, lam_factor, lambda_s=None):
              [("колесо", "center"), ("FF gain", "right"), ("FF dz", "right"), ("Kp", "right"), ("Ki", "right")], pi_rows)
     for n in notes:
         ui.warn(n)
-    cmd_ff = "$11;%.4f;%.4f;%.4f;%.4f;1;#" % (ff["L"][0], ff["L"][1], ff["R"][0], ff["R"][1])
-    cmd_pi = "$4;%.3f;%.3f;0;%.3f;%.3f;0;#" % (pi["L"][0], pi["L"][1], pi["R"][0], pi["R"][1])
+    cmd_ff = "$205;%.4f;%.4f;%.4f;%.4f;1;#" % (ff["L"][0], ff["L"][1], ff["R"][0], ff["R"][1])
+    cmd_pi = "$204;%.3f;%.3f;0;%.3f;%.3f;0;#" % (pi["L"][0], pi["L"][1], pi["R"][0], pi["R"][1])
     ui.panel(cmd_ff + "\n" + cmd_pi, "Команды для платы (по порядку: feedforward, затем ПИ; оба с сохранением во flash)", "green")
     ui.say("Если ПИ окажется колебательным - пересчитайте с --lam 1.0 (или 1.5) либо с общей --lambda-s 0.3: python3 mtcal.py fit cal_log.csv --lam 1.0", "dim")
     # LADRC по той же калибровке (b0 = K/Tm); подробнее и запись в плату - adrc.py
@@ -482,9 +492,9 @@ def main():
         link.sleep(0.1)
         link.send(cmd_pi + "\r\n")
         link.sleep(0.1)
-        link.send("$5;#\r\n$13;#\r\n")
+        link.send("$202;#\r\n$206;#\r\n")
         link.sleep(0.3)
-        ui.panel("\n".join(ln for ln in link.poll() if ln.startswith(("$2", "$4", "$6"))) or "(плата не ответила)",
+        ui.panel("\n".join(ln for ln in link.poll() if ln.startswith(("$202;", "$205;", "$207;", "$203;"))) or "(плата не ответила)",
                  "Команды отправлены. Ответ платы", "green")
 
 

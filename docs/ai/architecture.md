@@ -59,15 +59,16 @@ STOP не подтверждён независимой проверкой ну�
 |---|---|---|---|
 | ROS 2 (Humble) | корень репозитория | `colcon build` | — |
 | ESP32 (Arduino) | `esp_firmware/` | Arduino IDE / `arduino-cli` | `esp_firmware/COLCON_IGNORE` (0 байт, tracked, mode 100755) |
-| Вспомогательные скрипты | `init_scripts/`, `simple_PID_configurator/` | вручную | `COLCON_IGNORE` в обоих |
+| Вспомогательные скрипты | `init_scripts/` | вручную | `COLCON_IGNORE` |
 
 Пакеты ROS 2 верхнего уровня: `serial_bridge_cpp`, `lidar_filter_cpp`, `area_patrol`,
 `completed_scripts_jetbot`, `trajectory_maker`, `web_regulators_configurator`,
 `jetbot_mirea_description`, `sllidar_ros2`, `realsense_ros_gazebo`,
 `realsense_d435i_configs`. **[Код]** (по `package.xml` и `setup.py`).
 
-`simple_PID_configurator/` и `init_scripts/` не являются ROS-пакетами: в них нет
-`package.xml`, они запускаются как обычные Python-скрипты. **[Код]**
+`init_scripts/` не является ROS-пакетом: в нём нет `package.xml`, он запускается как
+обычные Python-скрипты. **[Код]** `simple_PID_configurator/` удалён в Этапе 2
+(ADR-017); `web_regulators_configurator` — единственный настройщик ПИД.
 
 ### 2.1. Отдельный контур ESP32
 
@@ -284,12 +285,17 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
   Публикует в `/low_level/serial/cmd`, читает `/low_level/serial/feedback`.
   `web_regulators_configurator/web_regulators_configurator/node.py:64-65,85,143`.
   **[Код]**
-- `simple_PID_configurator` — набор GUI (Tkinter / PySide2) и ROS-узел; публикует в
-  `/low_level/serial/cmd`. `simple_PID_configurator/ros2_node.py:91`. **[Код]**
+- `simple_PID_configurator` — набор GUI (Tkinter / PySide2) и ROS-узел; публиковал в
+  `/low_level/serial/cmd`. **Удалён в Этапе 2** (ADR-017): работал по протоколу v1,
+  дублировал функциональность `web_regulators_configurator`. **[Код]**
 
-Оба инструмента привязаны к **протоколу v1** (`$1`, `$2`, `$3`, `$4`, `$5`) и потому
-неработоспособны с прошивкой v2. **[Код]** `web_regulators_configurator/web_regulators_configurator/protocol.py:49-74`,
-`simple_PID_configurator/ros2_node.py:600-665`.
+Изначально оба инструмента были привязаны к **протоколу v1** (`$1`, `$2`, `$3`,
+`$4`, `$5`) и потому неработоспособны с прошивкой v2. **[Код]**
+
+**Статус после Этапа 2.** `web_regulators_configurator` переведён на протокол v2:
+команды `$101`/`$102`/`$103`/`$201`/`$202`/`$204`, разбор ответов `$301` (одометрия),
+`$202` (ПИД) и `$401` (телеметрия контура) — `web_regulators_configurator/web_regulators_configurator/protocol.py`,
+`node.py:118-152`. **[Код]**
 
 ### 4.4. Навигация и восприятие
 
@@ -400,17 +406,20 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
 Полный реестр с приоритетами и планом — в `docs/ai/project-state.md`. Здесь —
 краткий перечень архитектурно значимого.
 
-1. **Разрыв интеграции протокола.** Прошивка реализует только v2, а рабочий пакет
-   `serial_bridge_cpp` — только v1: шлёт `$1;v;w;#` (прошивка отбрасывает как
+1. **Разрыв интеграции протокола.** *Было:* прошивка реализует только v2, а рабочий
+   пакет `serial_bridge_cpp` — только v1: шлёт `$1;v;w;#` (прошивка отбрасывает как
    `UNKNOWN`) и не понимает `$301` (ждёт тип 1). Ни движение, ни одометрия не
-   работают в связке. Миграция v2 существует только в неиспользуемой копии
-   `esp_firmware/serial_bridge_cpp_reference/`, которая не собирается colcon
-   (`esp_firmware/COLCON_IGNORE`) и имеет то же имя пакета `serial_bridge_cpp`.
-   **[Код]**
+   работают в связке. Миграция v2 существовала только в неиспользуемой копии
+   `esp_firmware/serial_bridge_cpp_reference/`, которая не собиралась colcon
+   (`esp_firmware/COLCON_IGNORE`) и имела то же имя пакета `serial_bridge_cpp`.
+   **Закрыто в Этапе 2:** копия удалена, рабочий мост переведён на v2, добавлен
+   сквозной host-тест «мост ↔ прошивка». **[Код]**
 2. **Отсутствие CI** (нет `.github/`): ни сборка, ни тесты не запускаются
    автоматически. **[Код]**
-3. **Осиротевшие тесты.** `esp_firmware/tests/test_protocol_v2.cpp` и
-   `test_bridge_v2.cpp` не подключены ни к Makefile, ни к CMake, ни к скриптам.
+3. **Осиротевшие тесты.** *Было:* `esp_firmware/tests/test_protocol_v2.cpp` и
+   `test_bridge_v2.cpp` не были подключены ни к Makefile, ни к CMake, ни к скриптам.
+   **Частично закрыто в Этапе 2:** оба подключены к `esp_firmware/tools/host_test/Makefile`
+   (цель `test_protocol`), добавлен `test_end_to_end_v2.cpp`; CI (`.github/`) отсутствует.
    **[Код]**
 4. **Разделение владения состоянием на уровне сервисов.** Контексты не владеют
    объектами; инварианты поддерживаются соглашениями, а не типами. **[Код]**

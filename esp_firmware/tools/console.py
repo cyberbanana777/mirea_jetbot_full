@@ -5,21 +5,21 @@
 Консоль для платы: отправить команду и увидеть ответ, не утопая в потоке одометрии.
 
     python3 console.py --port /dev/ttyUSB0          (Windows: --port COM5)
-    python3 console.py --port /dev/ttyUSB0 --show-odom      # показывать и одометрию $1
+    python3 console.py --port /dev/ttyUSB0 --show-odom      # показывать и одометрию $301
     python3 console.py --port /dev/ttyUSB0 --log session.txt
 
-По умолчанию скрыты одометрия $1 (50 Гц) и телеметрия $3 (100 Гц, после $12;1). Всё остальное
-(ответы $2/$4/$6/$7, сообщения прошивки при загрузке и ошибки) печатается с отметкой времени,
+По умолчанию скрыты одометрия $301 (50 Гц) и телеметрия $401 (100 Гц, после $403;1). Всё остальное
+(ответы $202/$205/$207/$203, сообщения прошивки при загрузке и ошибки) печатается с отметкой времени,
 а известные ответы ещё и расшифровываются по полям.
 
-Команды платы вводятся как есть: $13;#   $5;#   $15;1;0#
+Команды платы вводятся как есть: $206;#   $202;#   $208;1;0#
 '#' в конце можно не писать - консоль допишет. Свои команды консоли:
   hold <команда>   повторять команду раз в 0.3 с (иначе через 1 с без команд плата делает
-                   аварийную остановку), например: hold $2;0.1;0.1;#
-  stop             прекратить hold и отправить $2;0;0;#
-  odom / tel       включить или выключить показ $1 / $3
+                   аварийную остановку), например: hold $102;0.1;0.1;#
+  stop             прекратить hold и отправить $103;#
+  odom / tel       включить или выключить показ $301 / $401
   last             показать последнюю строку одометрии (даже если она скрыта)
-  q, quit, exit    выход (перед выходом отправляется $2;0;0;#)
+  q, quit, exit    выход (перед выходом отправляется $103;#)
   help             эта справка
 Нужен pyserial: pip install pyserial
 """
@@ -37,14 +37,14 @@ except ImportError:
 PROMPT = "> "
 HOLD_PERIOD = 0.3
 
-# Расшифровка ответов платы: тип -> (название, поля)
+# Расшифровка ответов платы (протокол v2): тип -> (название, поля)
 FIELDS = {
-    "1": ("одометрия", ["x", "y", "курс", "v", "w", "vL", "vR"]),
-    "2": ("ПИ", ["Kp_L", "Ki_L", "Kd_L", "Kp_R", "Ki_R", "Kd_R"]),
-    "3": ("телеметрия", ["t_us", "refL", "vL", "uL", "refR", "vR", "uR"]),
-    "4": ("feedforward", ["gain_L", "dz_L", "gain_R", "dz_R"]),
-    "6": ("фильтр уставки", ["tau, с"]),
-    "7": ("регулятор", ["режим", "wc", "wo", "b0_L", "b0_R", "ff"]),
+    "301": ("одометрия", ["x", "y", "курс", "v", "w", "vL", "vR"]),
+    "202": ("ПИ", ["Kp_L", "Ki_L", "Kd_L", "Kp_R", "Ki_R", "Kd_R"]),
+    "401": ("телеметрия", ["t_us", "refL", "vL", "uL", "refR", "vR", "uR"]),
+    "205": ("feedforward", ["gain_L", "dz_L", "gain_R", "dz_R"]),
+    "207": ("фильтр уставки", ["tau, с"]),
+    "203": ("регулятор", ["режим", "wc", "wo", "b0_L", "b0_R", "ff"]),
 }
 MODE = {"0": "ПИ", "1": "LADRC"}
 FF = {"0": "нет", "1": "мёртвая зона", "2": "полный FF"}
@@ -60,7 +60,7 @@ def color(text, code):
 
 
 def decode(line):
-    """'$4;0.5;0.3;0.8;0.31;#' -> 'feedforward: gain_L=0.5 ...' или None"""
+    """'$205;0.5;0.3;0.8;0.31;#' -> 'feedforward: gain_L=0.5 ...' или None"""
     if not line.startswith("$") or ";" not in line:
         return None
     body = line[1:].split("#", 1)[0]
@@ -72,9 +72,9 @@ def decode(line):
     pairs = []
     for i, v in enumerate(vals):
         key = names[i] if i < len(names) else "?%d" % i
-        if parts[0] == "7" and key == "режим":
+        if parts[0] == "203" and key == "режим":
             v = MODE.get(v, v)
-        if parts[0] == "7" and key == "ff":
+        if parts[0] == "203" and key == "ff":
             v = FF.get(v, v)
         pairs.append("%s=%s" % (key, v))
     return "%s: %s" % (name, "  ".join(pairs))
@@ -83,12 +83,12 @@ def decode(line):
 class Console:
     def __init__(self, ser, show_odom=False, show_tel=False, log=None):
         self.ser = ser
-        self.show = {"1": show_odom, "3": show_tel}
+        self.show = {"301": show_odom, "401": show_tel}
         self.log = log
         self.lock = threading.Lock()
         self.alive = True
         self.hold_cmd = None
-        self.hidden = {"1": 0, "3": 0}
+        self.hidden = {"301": 0, "401": 0}
         self.last_odom = ""
         self.t0 = time.monotonic()
 
@@ -132,7 +132,7 @@ class Console:
 
     def handle(self, line):
         typ = line[1:].split(";", 1)[0] if line.startswith("$") else None
-        if typ == "1":
+        if typ == "301":
             self.last_odom = line
         if typ in self.show and not self.show[typ]:
             self.hidden[typ] += 1
@@ -175,20 +175,20 @@ class Console:
         if low == "help":
             self.out(__doc__)
         elif low in ("odom", "tel"):
-            k = "1" if low == "odom" else "3"
+            k = "301" if low == "odom" else "401"
             self.show[k] = not self.show[k]
-            self.out("показ %s: %s" % ("$1" if k == "1" else "$3", "вкл" if self.show[k] else "выкл"))
+            self.out("показ %s: %s" % ("$301" if k == "301" else "$401", "вкл" if self.show[k] else "выкл"))
         elif low == "last":
             self.out(self.last_odom or "(одометрии ещё не было)")
             if self.last_odom:
                 self.out(" " * 12 + color(decode(self.last_odom) or "", "36"))
         elif low == "stop":
             self.hold_cmd = None
-            self.send("$2;0;0;#")
+            self.send("$103;#")
         elif low.startswith("hold"):
             cmd = s[4:].strip()
             if not cmd.startswith("$"):
-                self.out("пример: hold $2;0.1;0.1;#")
+                self.out("пример: hold $102;0.1;0.1;#")
             else:
                 self.hold_cmd = cmd if cmd.endswith("#") else cmd + "#"
                 self.send(self.hold_cmd)
@@ -196,21 +196,21 @@ class Console:
         elif s.startswith("$"):
             self.send(s)
         else:
-            self.out("не понял: команды платы начинаются с '$' (например $13;#), help - справка")
+            self.out("не понял: команды платы начинаются с '$' (например $206;#), help - справка")
         return True
 
     def status_hidden(self):
-        n1, n3 = self.hidden["1"], self.hidden["3"]
-        self.hidden = {"1": 0, "3": 0}
-        return "скрыто: одометрия $1 - %d, телеметрия $3 - %d" % (n1, n3)
+        n1, n3 = self.hidden["301"], self.hidden["401"]
+        self.hidden = {"301": 0, "401": 0}
+        return "скрыто: одометрия $301 - %d, телеметрия $401 - %d" % (n1, n3)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", required=True, help="например /dev/ttyUSB0 или COM5")
     ap.add_argument("--baud", type=int, default=115200)
-    ap.add_argument("--show-odom", action="store_true", help="показывать одометрию $1")
-    ap.add_argument("--show-tel", action="store_true", help="показывать телеметрию $3")
+    ap.add_argument("--show-odom", action="store_true", help="показывать одометрию $301")
+    ap.add_argument("--show-tel", action="store_true", help="показывать телеметрию $401")
     ap.add_argument("--log", help="дописывать весь показанный вывод в файл")
     a = ap.parse_args()
 
@@ -244,7 +244,7 @@ def main():
     finally:
         con.hold_cmd = None
         if con.alive:
-            con.send("$2;0;0;#", echo=False)
+            con.send("$103;#", echo=False)
             time.sleep(0.2)
         con.alive = False
         con.out(con.status_hidden())

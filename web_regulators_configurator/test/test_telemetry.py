@@ -7,9 +7,9 @@ from web_regulators_configurator.telemetry import DeadMan, Telemetry
 def test_since_returns_only_new_records():
     tel = Telemetry()
     tel.add_sample(1.0, 'v', 0.1)
-    tel.add_log(1.0, 'tx', '$5;#')
+    tel.add_log(1.0, 'tx', '$202;#')
     cur, samples, log, pid = tel.since(0)
-    assert samples == [(1.0, 'v', 0.1)] and log == [(1.0, 'tx', '$5;#')] and pid is None
+    assert samples == [(1.0, 'v', 0.1)] and log == [(1.0, 'tx', '$202;#')] and pid is None
     tel.add_sample(2.0, 'vl', 0.2)
     tel.set_pid({'kp_l': 1.0})
     cur2, samples, log, pid = tel.since(cur)

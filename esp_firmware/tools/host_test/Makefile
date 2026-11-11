@@ -2,11 +2,13 @@
 #   make UPID_DIR=/путь/к/uPID test
 UPID_DIR ?= $(HOME)/Arduino/libraries/uPID
 FW = ../../esp32_firmware
+TESTS = ../../tests
+BRIDGE = ../../../serial_bridge_cpp/include
 CXX ?= g++
 CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter
 STUBS = -Istubs -I$(UPID_DIR)
 
-all: test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue
+all: test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue test_protocol_v2 test_bridge_v2 test_end_to_end_v2
 
 sim_new: sim_new.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_new.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
@@ -49,6 +51,24 @@ FWCPP = $(filter-out $(FW)/esp32_firmware.ino,$(wildcard $(FW)/*.cpp))
 test_glue: test_glue.cpp $(FWCPP) $(FW)/esp32_firmware.ino $(wildcard $(FW)/*.h) stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. -x c++ $(FW)/esp32_firmware.ino -x c++ test_glue.cpp $(FWCPP) stubs/stubs.cpp -o $@
 
+# --- Тесты протокола v2 (не требуют uPID) -----------------------------------
+# Проверка контракта «мост ↔ прошивка»: команда моста разбирается парсером
+# прошивки, кадр прошивки — парсером моста.
+test_protocol_v2: $(TESTS)/test_protocol_v2.cpp $(FW)/command_parser.cpp $(FW)/command_parser.h $(FW)/command_policy.h
+	$(CXX) $(CXXFLAGS) -I$(TESTS)/stubs -I$(FW) $(TESTS)/test_protocol_v2.cpp $(FW)/command_parser.cpp -o $@
+
+test_bridge_v2: $(TESTS)/test_bridge_v2.cpp $(BRIDGE)/serial_bridge_cpp/frame_parser.hpp
+	$(CXX) $(CXXFLAGS) -I$(BRIDGE) $(TESTS)/test_bridge_v2.cpp -o $@
+
+test_end_to_end_v2: $(TESTS)/test_end_to_end_v2.cpp $(FW)/command_parser.cpp $(FW)/command_parser.h $(FW)/command_policy.h $(BRIDGE)/serial_bridge_cpp/frame_parser.hpp $(BRIDGE)/serial_bridge_cpp/protocol.hpp
+	$(CXX) $(CXXFLAGS) -I$(TESTS)/stubs -I$(FW) -I$(BRIDGE) $(TESTS)/test_end_to_end_v2.cpp $(FW)/command_parser.cpp -o $@
+
+# Только тесты протокола: библиотека uPID не нужна.
+test_protocol: test_protocol_v2 test_bridge_v2 test_end_to_end_v2
+	./test_protocol_v2
+	./test_bridge_v2
+	./test_end_to_end_v2
+
 test: all
 	./test_glue
 	./test_estimator
@@ -56,6 +76,11 @@ test: all
 	./test_encoders_equiv
 	./sim_old
 	./sim_new
+	./test_protocol_v2
+	./test_bridge_v2
+	./test_end_to_end_v2
 
 clean:
-	rm -f test_glue test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv *.o trace_new.csv
+	rm -f test_glue test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_protocol_v2 test_bridge_v2 test_end_to_end_v2 trace_new.csv
+	# enc_new.o и enc_old.o не удаляем: они отслеживаются в git и служат
+	# предустановленными объектами для test_encoders_equiv.

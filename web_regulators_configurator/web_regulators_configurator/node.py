@@ -122,17 +122,31 @@ class WebConfiguratorNode(Node):
         except ProtocolError:
             self.telemetry.add_log(now, 'rx', msg.data)
             return
-        if kind == 1 and len(values) >= 7:
-            # $1;x;y;theta;v;w;v_left;v_right;#
+        if kind == protocol.MSG_ODOMETRY and len(values) >= protocol.ODOMETRY_VALUES:
+            # $301;x;y;theta;v;w;v_left;v_right;#
             self.telemetry.mark_frame(now)
             for name, value in zip(('v', 'w', 'vl', 'vr'), values[3:7]):
                 self._record(name, value, now)
             if self._log_odometry:
                 self.telemetry.add_log(now, 'rx', msg.data)
             return
-        if kind == 2 and len(values) >= 6:
-            # $2;KpL;KiL;KdL;KpR;KiR;KdR;#
+        if kind == protocol.MSG_PID and len(values) >= protocol.PID_VALUES:
+            # $202;KpL;KiL;KdL;KpR;KiR;KdR;#
             self.telemetry.set_pid(dict(zip(protocol.PID_KEYS, values[:6])))
+            self.telemetry.add_log(now, 'rx', msg.data)
+            return
+        if kind == protocol.MSG_TELEMETRY and len(values) >= protocol.TELEMETRY_VALUES:
+            # $401;t;ref_L;vel_L;duty_L;ref_R;vel_R;duty_R;#
+            # Телеметрия контура идёт 100 Гц, когда включён $403; при этом
+            # одометрия $301 не шлётся. Берём скорости из неё, чтобы графики
+            # не были пустыми, и не пишем её в лог: 100 Гц забьют буфер.
+            self.telemetry.mark_frame(now)
+            vl, vr = values[2], values[5]
+            self._record('vl', vl, now)
+            self._record('vr', vr, now)
+            self._record('v', (vl + vr) / 2.0, now)
+            self._record('w', (vr - vl) / self._wheel_base, now)
+            return
         self.telemetry.add_log(now, 'rx', msg.data)
 
     # ================================================================ отправка
@@ -393,7 +407,7 @@ def main(args=None):
         pass
     finally:
         try:
-            node.shutdown()      # отправляет $1;0;0;# и останавливает сервер
+            node.shutdown()      # отправляет $103;# и останавливает сервер
         finally:
             node.destroy_node()
             rclpy.try_shutdown()
