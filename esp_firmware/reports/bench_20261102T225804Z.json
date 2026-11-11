@@ -1,15 +1,43 @@
 {
-  "timestamp_utc": "20261102T220322Z",
+  "timestamp_utc": "20261102T225804Z",
   "port": "/dev/ttyUSB0",
   "baud": 115200,
   "duration_per_phase_s": 2.5,
   "results": {
+    "UART-INFO-001": {
+      "status": "PASS",
+      "version": [
+        2.0,
+        2.0
+      ]
+    },
+    "UART-DIAG-001": {
+      "status": "PASS",
+      "snapshot": [
+        19578.0,
+        2.0,
+        0.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "fields": [
+        "uptime_ms",
+        "accepted",
+        "rejected",
+        "watchdog_stops",
+        "stopped",
+        "ina_ok",
+        "pwm_ok"
+      ]
+    },
     "UART-ODOM-001": {
       "status": "PASS",
       "metrics": {
-        "frames": 142,
-        "rate_hz": 55.705,
-        "max_host_gap_ms": 50.75,
+        "frames": 126,
+        "rate_hz": 50.488,
+        "max_host_gap_ms": 50.86,
         "decode_errors": 0,
         "overflow": 0
       }
@@ -25,12 +53,25 @@
         0.0
       ]
     },
+    "UART-TXCONFIG-001": {
+      "status": "PASS",
+      "correlated_pid": [
+        0.951,
+        5.475,
+        0.0,
+        1.426,
+        10.009,
+        0.0
+      ],
+      "nack_invalid_pid": true,
+      "pid_unchanged": true
+    },
     "UART-PARSER-001": {
       "status": "PASS",
       "metrics": {
         "frames": 155,
-        "rate_hz": 60.955,
-        "max_host_gap_ms": 50.67,
+        "rate_hz": 60.94,
+        "max_host_gap_ms": 50.64,
         "decode_errors": 0,
         "overflow": 0
       },
@@ -40,8 +81,8 @@
       "status": "PASS",
       "metrics": {
         "frames": 126,
-        "rate_hz": 50.502,
-        "max_host_gap_ms": 50.62,
+        "rate_hz": 50.499,
+        "max_host_gap_ms": 50.81,
         "decode_errors": 0,
         "overflow": 0
       },

@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "20261102T221839Z",
+  "timestamp_utc": "20261102T232318Z",
   "port": "/dev/ttyUSB0",
   "baud": 115200,
   "duration_per_phase_s": 2.5,
@@ -14,7 +14,7 @@
     "UART-DIAG-001": {
       "status": "PASS",
       "snapshot": [
-        57292.0,
+        5298.0,
         2.0,
         0.0,
         1.0,
@@ -36,8 +36,8 @@
       "status": "PASS",
       "metrics": {
         "frames": 126,
-        "rate_hz": 50.504,
-        "max_host_gap_ms": 50.64,
+        "rate_hz": 50.527,
+        "max_host_gap_ms": 50.7,
         "decode_errors": 0,
         "overflow": 0
       }
@@ -69,9 +69,9 @@
     "UART-PARSER-001": {
       "status": "PASS",
       "metrics": {
-        "frames": 155,
-        "rate_hz": 60.942,
-        "max_host_gap_ms": 50.65,
+        "frames": 154,
+        "rate_hz": 60.563,
+        "max_host_gap_ms": 50.7,
         "decode_errors": 0,
         "overflow": 0
       },
@@ -81,8 +81,8 @@
       "status": "PASS",
       "metrics": {
         "frames": 127,
-        "rate_hz": 50.945,
-        "max_host_gap_ms": 50.73,
+        "rate_hz": 50.841,
+        "max_host_gap_ms": 50.84,
         "decode_errors": 0,
         "overflow": 0
       },

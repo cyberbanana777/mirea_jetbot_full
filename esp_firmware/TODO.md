@@ -24,3 +24,15 @@
 - v2.2: NACK for malformed frames with unusable `request_id` is impossible; add envelope-level framing, checksum and request IDs when redesigning wire transport.
 - v2.2: transactional NVS operations not implemented; existing legacy configuration setters still lack acknowledgements.
 - v2.2: ack for 210 reports software apply, not motor or Flash verification; validate on hardware.
+
+## v2.2.2 architectural follow-ups
+
+- `CommandContext` still contains many references: split into smaller service-specific contexts in a separate refactor (avoid changing command behavior at the same time).
+- Existing config setters are not all transactional; align ACK/NACK and validation in a later API revision.
+- Full target compilation and device behavior of v2.2.2 are not yet verified; manually compile and run 7/7 UART regression tests before marking validated.
+- No automated ESP32 compilation gate requested; do not add one without revisiting that decision.
+
+### v2.2.4 verification
+- [ ] Manually compile and flash ESP32 firmware.
+- [ ] Run hardware_suite.py; expect 7/7 PASS and unchanged PID.
+- [ ] Physical PWM zero, timing jitter and active movement remain unverified.

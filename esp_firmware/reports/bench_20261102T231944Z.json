@@ -1,0 +1,98 @@
+{
+  "timestamp_utc": "20261102T231944Z",
+  "port": "/dev/ttyUSB0",
+  "baud": 115200,
+  "duration_per_phase_s": 2.5,
+  "results": {
+    "UART-INFO-001": {
+      "status": "PASS",
+      "version": [
+        2.0,
+        2.0
+      ]
+    },
+    "UART-DIAG-001": {
+      "status": "PASS",
+      "snapshot": [
+        16517.0,
+        2.0,
+        0.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "fields": [
+        "uptime_ms",
+        "accepted",
+        "rejected",
+        "watchdog_stops",
+        "stopped",
+        "ina_ok",
+        "pwm_ok"
+      ]
+    },
+    "UART-ODOM-001": {
+      "status": "PASS",
+      "metrics": {
+        "frames": 126,
+        "rate_hz": 50.474,
+        "max_host_gap_ms": 50.76,
+        "decode_errors": 0,
+        "overflow": 0
+      }
+    },
+    "UART-CONFIG-001": {
+      "status": "PASS",
+      "pid": [
+        0.951,
+        5.475,
+        0.0,
+        1.426,
+        10.009,
+        0.0
+      ]
+    },
+    "UART-TXCONFIG-001": {
+      "status": "PASS",
+      "correlated_pid": [
+        0.951,
+        5.475,
+        0.0,
+        1.426,
+        10.009,
+        0.0
+      ],
+      "nack_invalid_pid": true,
+      "pid_unchanged": true
+    },
+    "UART-PARSER-001": {
+      "status": "PASS",
+      "metrics": {
+        "frames": 154,
+        "rate_hz": 60.49,
+        "max_host_gap_ms": 50.88,
+        "decode_errors": 0,
+        "overflow": 0
+      },
+      "pid_unchanged": true
+    },
+    "MOTOR-SAFETY-001-UART": {
+      "status": "PASS",
+      "metrics": {
+        "frames": 126,
+        "rate_hz": 50.562,
+        "max_host_gap_ms": 50.89,
+        "decode_errors": 0,
+        "overflow": 0
+      },
+      "pid_unchanged": true,
+      "note": "Does NOT verify physical stop or PCA9685 output"
+    }
+  },
+  "limitations": [
+    "No physical PWM measurement",
+    "Host receive timestamps do not measure ESP32 scheduler jitter",
+    "No NVS writing or motor movement"
+  ]
+}

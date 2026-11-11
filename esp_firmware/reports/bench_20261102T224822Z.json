@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "20261102T222602Z",
+  "timestamp_utc": "20261102T224822Z",
   "port": "/dev/ttyUSB0",
   "baud": 115200,
   "duration_per_phase_s": 2.5,
@@ -14,9 +14,9 @@
     "UART-DIAG-001": {
       "status": "PASS",
       "snapshot": [
-        23588.0,
-        2.0,
-        0.0,
+        276597.0,
+        11.0,
+        7.0,
         1.0,
         1.0,
         1.0,
@@ -35,8 +35,8 @@
     "UART-ODOM-001": {
       "status": "PASS",
       "metrics": {
-        "frames": 125,
-        "rate_hz": 50.169,
+        "frames": 126,
+        "rate_hz": 50.535,
         "max_host_gap_ms": 50.65,
         "decode_errors": 0,
         "overflow": 0
@@ -70,8 +70,8 @@
       "status": "PASS",
       "metrics": {
         "frames": 155,
-        "rate_hz": 60.879,
-        "max_host_gap_ms": 50.81,
+        "rate_hz": 60.914,
+        "max_host_gap_ms": 50.67,
         "decode_errors": 0,
         "overflow": 0
       },
@@ -81,8 +81,8 @@
       "status": "PASS",
       "metrics": {
         "frames": 126,
-        "rate_hz": 50.488,
-        "max_host_gap_ms": 50.61,
+        "rate_hz": 50.504,
+        "max_host_gap_ms": 50.71,
         "decode_errors": 0,
         "overflow": 0
       },

@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "20261102T220840Z",
+  "timestamp_utc": "20261102T233445Z",
   "port": "/dev/ttyUSB0",
   "baud": 115200,
   "duration_per_phase_s": 2.5,
@@ -8,13 +8,13 @@
       "status": "PASS",
       "version": [
         2.0,
-        1.0
+        2.0
       ]
     },
     "UART-DIAG-001": {
       "status": "PASS",
       "snapshot": [
-        16366.0,
+        6987.0,
         2.0,
         0.0,
         1.0,
@@ -32,12 +32,40 @@
         "pwm_ok"
       ]
     },
+    "UART-I2C-DIAG-001": {
+      "status": "PASS",
+      "snapshot": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "device_order": [
+        "INA219",
+        "PCA9685",
+        "OLED"
+      ],
+      "fields_per_device": [
+        "state",
+        "probe_failures",
+        "recovery_attempts",
+        "successful_recoveries"
+      ]
+    },
     "UART-ODOM-001": {
       "status": "PASS",
       "metrics": {
-        "frames": 126,
-        "rate_hz": 50.546,
-        "max_host_gap_ms": 50.6,
+        "frames": 125,
+        "rate_hz": 50.147,
+        "max_host_gap_ms": 50.68,
         "decode_errors": 0,
         "overflow": 0
       }
@@ -53,12 +81,25 @@
         0.0
       ]
     },
+    "UART-TXCONFIG-001": {
+      "status": "PASS",
+      "correlated_pid": [
+        0.951,
+        5.475,
+        0.0,
+        1.426,
+        10.009,
+        0.0
+      ],
+      "nack_invalid_pid": true,
+      "pid_unchanged": true
+    },
     "UART-PARSER-001": {
       "status": "PASS",
       "metrics": {
         "frames": 155,
-        "rate_hz": 60.924,
-        "max_host_gap_ms": 50.75,
+        "rate_hz": 60.983,
+        "max_host_gap_ms": 50.68,
         "decode_errors": 0,
         "overflow": 0
       },
@@ -67,9 +108,9 @@
     "MOTOR-SAFETY-001-UART": {
       "status": "PASS",
       "metrics": {
-        "frames": 126,
-        "rate_hz": 50.514,
-        "max_host_gap_ms": 50.71,
+        "frames": 127,
+        "rate_hz": 50.909,
+        "max_host_gap_ms": 50.59,
         "decode_errors": 0,
         "overflow": 0
       },
