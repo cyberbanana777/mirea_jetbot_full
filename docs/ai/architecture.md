@@ -84,6 +84,22 @@ Python-кодек протокола и аппаратные скрипты), `t
 участвуют: `esp32_firmware_old/` (монолитная прошивка v1), `Speed_for_PID_test_speed*/`
 (скетчи Arduino), `reports/` (11 прогонов стенда 2026-11-02). **[Код]**
 
+### 2.2. Слой автоматических проверок
+
+Над обоими контурами добавлен слой проверок, который **не требует ROS 2 и не
+требует платы** (Этап 6): **[Код]**
+
+| Слой | Состав | Что проверяет |
+|---|---|---|
+| Хостовые тесты | `esp_firmware/tools/host_test/` (Makefile), `esp_firmware/tests/` | контракт протокола v2, границы длины кадра, согласованность ID и комментариев |
+| Python-тесты | `esp_firmware/tools/uart_bench/` (37 тестов), `web_regulators_configurator/test/`, `area_patrol/test/` | эталонный кодек, стендовые скрипты, чистые Python-модули пакетов |
+| Guard-скрипт | `tools/ci/guard.py` | ID протокола ↔ `PROTOCOL.md`, комментарии `command_parser.h` ↔ `decodeCommand`, гигиена индекса, отсутствие висячих путей |
+| Синтаксическая проверка | `esp_firmware/tools/host_test/syntax_check_without_upid.sh` | файлы прошивки, не требующие `uPID` (остальные — SKIP) |
+| CI | `.github/workflows/ci.yml` | запуск всех четырёх слоёв на `push`/`pull_request` |
+
+Вне слоя остаются: сборка ROS 2-пакетов (`colcon`/`ament`), файлы прошивки с
+зависимостью `uPID` (R-12) и аппаратные прогоны (R-14).
+
 ---
 
 ## 3. Архитектура контура ESP32
@@ -401,6 +417,10 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
 10. **Ответы best-effort** — вызывающий обязан повторять read-only запросы с
     таймаутом. `protocol_wrapper.cpp` (проверки `availableForWrite`),
     `esp_firmware/PROTOCOL.md` (v2.1). **[Код]+[Док]**
+11. **Кадр host → ESP32 не длиннее 127 байт** (включая `$` и `#`) — иначе
+    `SerialReceiver` молча сбросит приём, без счётчика и без ответа. Худшая
+    команда `$210` занимает 125 байт, запас — 2 байта; проверяется тестом
+    `esp_firmware/tests/test_frame_limits.cpp`. **[Код]**
 
 ---
 
