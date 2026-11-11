@@ -26,7 +26,9 @@ The merge brought: `std::isfinite` checks in the frame parser (`nan` / `inf` are
 
 The user-facing tool `web_regulators_configurator` is on v2 as well. The former `simple_PID_configurator` (v1-only) was removed — `web_regulators_configurator` covers its functionality.
 
-The host tests in `tests/` check the contract between the two sides: `test_protocol_v2.cpp` (firmware parser), `test_bridge_v2.cpp` (bridge parser) and `test_end_to_end_v2.cpp` (a bridge frame through the firmware parser and a firmware frame through the bridge parser).
+The host tests in `tests/` check the contract between the two sides: `test_protocol_v2.cpp` (firmware parser), `test_bridge_v2.cpp` (bridge parser), `test_end_to_end_v2.cpp` (a bridge frame through the firmware parser and a firmware frame through the bridge parser) and `test_frame_limits.cpp` (the 127-byte receive limit of the firmware: the longest command is `$210` at 125 bytes, the margin is 2 bytes — see «Frame length limits» in `PROTOCOL.md`).
+
+All of them are built and run by `make -C esp_firmware/tools/host_test test_protocol` (no `uPID` required). The repository also has a CI workflow (`.github/workflows/ci.yml`) that runs the host tests, the Python tests, a protocol-consistency guard (`tools/ci/guard.py`) and a syntax check of the firmware files that do not need `uPID`; it does not build the ROS 2 packages, because that would require a ROS 2 environment.
 
 Architecture memory for the whole repository lives in `../docs/ai/` (`architecture.md`, `components.md`, `decisions.md`, `project-state.md`).
 

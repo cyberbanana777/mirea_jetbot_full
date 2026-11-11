@@ -1,5 +1,7 @@
 # Документация проекта jetbot_mirea
 
+[![CI](https://github.com/cyberbanana777/mirea_jetbot_full/actions/workflows/ci.yml/badge.svg)](https://github.com/cyberbanana777/mirea_jetbot_full/actions/workflows/ci.yml)
+
 Это документация по настройке, эксплуатации и программированию робота jetbot_mirea.
 Здесь вы найдете дорожную карту, которая поможет вам сориентироваться в материалах и приступить к работе на реальном роботе или его симуляции в Gazebo.
 	

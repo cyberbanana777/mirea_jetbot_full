@@ -1,0 +1,76 @@
+name: CI
+
+# Проверки, которые не требуют ROS 2 и платы ESP32:
+#   - host-тесты протокола v2 (прошивка <-> мост), включая границы длины кадра;
+#   - Python-тесты стендовых утилит и чистых Python-модулей пакетов;
+#   - согласованность ID протокола, комментариев и гигиены репозитория;
+#   - синтаксическая проверка прошивки на заглушках Arduino.
+#
+# Чего CI НЕ делает: не собирает ROS 2-пакеты (нужны ament/colcon и ROS 2),
+# не проверяет прошивку, которой нужна библиотека uPID, и не запускает
+# аппаратные тесты. Полный список ограничений — в docs/ai/project-state.md.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: Host-тесты протокола (ESP32 <-> мост)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Сборка и запуск тестов протокола
+        run: make -C esp_firmware/tools/host_test test_protocol
+
+  python-tests:
+    name: Python-тесты (uart_bench и чистые модули)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Установка pytest
+        run: python -m pip install --upgrade pip pytest
+      - name: Синтаксис всех Python-файлов репозитория
+        run: |
+          git ls-files '*.py' -z | xargs -0 python -m py_compile
+      - name: Тесты стендовых утилит (unittest)
+        run: python -m unittest discover -s esp_firmware/tools/uart_bench
+      - name: Тесты web_regulators_configurator и area_patrol (pytest)
+        run: |
+          PYTHONPATH=web_regulators_configurator:area_patrol \
+            python -m pytest -q \
+              web_regulators_configurator/test/test_protocol.py \
+              web_regulators_configurator/test/test_telemetry.py \
+              web_regulators_configurator/test/test_step_test.py \
+              area_patrol/test/test_geometry.py
+
+  protocol-guard:
+    name: Согласованность протокола и гигиена репозитория
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверки ID протокола, комментариев, гигиены и путей
+        run: python3 tools/ci/guard.py
+
+  firmware-syntax:
+    name: Синтаксис прошивки (без uPID)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверка файлов прошивки, не требующих uPID
+        run: esp_firmware/tools/host_test/syntax_check_without_upid.sh
