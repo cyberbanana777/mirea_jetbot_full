@@ -2,6 +2,12 @@
 import math
 from dataclasses import dataclass
 
+# Предел приёмного буфера прошивки: SerialReceiver::BUFFER_SIZE - 1 = 127 байт.
+# Кадр длиннее прошивка молча отбросит (serial_receiver.cpp: переполнение ->
+# сброс приёма), поэтому кодировщик не должен собирать такие кадры.
+MAX_COMMAND_BYTES = 127
+# Предел для кадров, которые шлёт прошивка: самый длинный — $405
+# (до 140 байт с CRLF при насыщенных 32-битных счётчиках).
 MAX_FRAME_BYTES = 192
 IDS = {101:'twist',102:'wheel_targets',103:'stop',104:'open_loop',
        201:'set_pid_ram',202:'pid',210:'set_pid_transaction',211:'pid_transaction',203:'adrc',204:'set_pid_nvs',
@@ -25,7 +31,7 @@ def encode(msg_id:int,*fields:float)->bytes:
         tokens.append(format(v,'.9g'))
     msg='$'+str(msg_id)+';' + ''.join(s+';' for s in tokens)+'#'
     b=msg.encode('ascii')
-    if len(b)>MAX_FRAME_BYTES:raise ValueError('frame too long')
+    if len(b)>MAX_COMMAND_BYTES:raise ValueError('frame too long for the firmware buffer')
     return b
 
 def decode(raw:bytes|str)->Frame:

@@ -16,6 +16,7 @@ jetbot_telemetria.timer
 esp_firmware/tools/host_test/test_protocol_v2
 esp_firmware/tools/host_test/test_bridge_v2
 esp_firmware/tools/host_test/test_end_to_end_v2
+esp_firmware/tools/host_test/test_frame_limits
 esp_firmware/tools/host_test/test_glue
 esp_firmware/tools/host_test/test_estimator*
 esp_firmware/tools/host_test/test_encoders_equiv

@@ -10,6 +10,31 @@ A fully received frame that is malformed (bad syntax, non-numeric or non-finite 
 
 ACK/NACK is supported only for transactional 210; legacy-style setting commands still have no confirmation.
 
+### Frame length limits
+
+The ESP32 receive buffer is 128 bytes (`SerialReceiver::BUFFER_SIZE`) and a frame
+is accepted only if it fits completely, `$` and `#` included: **the maximum
+accepted frame length is 127 bytes**. A longer frame overflows the buffer and is
+dropped silently — no `rejected_commands` increment and no response. The receiver
+resynchronizes on the next `$`.
+
+The longest command in the «Jetson -> ESP32» table is `$210` (7 fields). With the
+widest numeric representation a sender can produce (`format(v, '.9g')` for a
+float64 — 16 characters) it occupies **125 bytes**, so the margin is 2 bytes.
+With the `.5f` format used by `web_regulators_configurator` (|v| <= 1000) the same
+frame is 90 bytes. Every other command is shorter.
+
+The opposite direction has a different limit: `$405` is produced by the firmware
+and travels to the Jetson, where the receiver accepts up to 192 bytes
+(`uart_bench.Framer`) and the bridge parser up to 256 bytes (`FrameParser`).
+With saturated 32-bit counters `$405` is 140 bytes including CRLF, so it fits.
+
+Both limits are checked automatically: `esp_firmware/tests/test_frame_limits.cpp`
+compares the maximum length of every command with the buffer limit and with this
+table, and `esp_firmware/tools/uart_bench` refuses to encode a command longer
+than 127 bytes. A change of the numeric format or of the number of fields in a
+command must come with an update of that test.
+
 ## Jetson -> ESP32
 
 | ID | Argument list | Meaning |
