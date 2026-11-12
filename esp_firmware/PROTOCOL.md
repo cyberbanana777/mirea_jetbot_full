@@ -74,7 +74,7 @@ command must come with an update of that test.
 |211|request_id,kpL,kiL,kdL,kpR,kiR,kdR|transactional PID read response|
 |402|uptime_ms,accepted_commands,rejected_commands,watchdog_stops,motor_stopped,ina_ok,pwm_ok|diagnostic snapshot|
 |405|ina_state,ina_failures,ina_attempts,ina_recoveries,pwm_state,pwm_failures,pwm_attempts,pwm_recoveries,oled_state,oled_failures,oled_attempts,oled_recoveries|read-only I2C snapshot|
-|501|major,minor|protocol version (not a firmware version)|
+|501|major,minor|protocol version (not a firmware version); currently `2;3`|
 |502|request_id,command|ACK for a transactional command|
 |503|request_id,command,error|NACK for a transactional command (error `1` = invalid PID)|
 
@@ -111,7 +111,7 @@ Motion watchdog updates only on structurally valid motion commands (IDs 101, 102
 
 ## v2.1 read-only API extension
 
-- `$501;#` -> `$501;2;1;#` (protocol major/minor, **not** a firmware version).
+- `$501;#` -> `$501;2;1;#` (protocol major/minor, **not** a firmware version) — the value of the v2.1 line; the current value is in the «Versioning» section.
 - `$402;#` -> `$402;uptime_ms;accepted_commands;rejected_commands;watchdog_stops;motor_stopped;ina_ok;pwm_ok;#`.
 - Counters reset at boot, may wrap after 2^32 increments. `accepted_commands` counts frames passing structural validation, **not successful application of settings**. `rejected_commands` counts fully received but structurally invalid/unknown frames; UART receiver overflow/unfinished frames are not included. `watchdog_stops` counts transitions into communication timeout, even if motors were already stopped.
 - Replies are best-effort: responses may be omitted when the TX buffer lacks room. For this reason retry read-only queries with an application timeout.
@@ -121,7 +121,7 @@ Existing 101/103/202/301 IDs and payloads remain unchanged for hardware regressi
 
 ## v2.2 transactional PID (RAM only)
 
-- `$501;#` → `$501;2;2;#` (protocol version).
+- `$501;#` → `$501;2;2;#` (protocol version) — the value of the v2.2 line; the current value is in the «Versioning» section.
 - `$211;request_id;#` → `$211;request_id;kpL;kiL;kdL;kpR;kiR;kdR;#`.
 - `$210;request_id;kpL;kiL;kdL;kpR;kiR;kdR;#` → `$502;request_id;210;#` after applying PID in RAM; or `$503;request_id;210;1;#` for values outside allowed bounds.
 - `request_id` is an exact integer from **1 to 65535** (ESP32 stores it as uint16). Error `1` means invalid PID coefficient: non-finite, negative, or >1000.
@@ -131,24 +131,29 @@ Existing 101/103/202/301 IDs and payloads remain unchanged for hardware regressi
 
 ## v2.3.3 — read-only I2C diagnostic snapshot
 
+The features of this section correspond to **protocol version 2;3** — the version reported by `$501;#` since the bump of 2026-11-11.
+
 Request `$405;#` produces `$405;ina_state;ina_failures;ina_attempts;ina_recoveries;pwm_state;pwm_failures;pwm_attempts;pwm_recoveries;oled_state;oled_failures;oled_attempts;oled_recoveries;#`.
 
 All twelve fields are unsigned decimal integers. Devices are ordered **INA219, PCA9685, OLED**. States: `0` not detected at startup, `1` healthy, `2` probe/recovery fault, `3` recovered. Counters accumulate since boot and saturate at `4294967295`. The response is best-effort and can be dropped if UART TX space is insufficient. A read adds no I2C operations and does not change NVS, PWM, watchdog or settings. I2C ACK alone cannot prove that output pins or motor power are safe.
 
 ## Versioning
 
-The project currently carries **three independent version axes**. They are not interchangeable, and mixing them is the source of most version confusion in this repository.
+The project carries **three independent version axes**. They are not interchangeable, and mixing them is the source of most version confusion in this repository.
 
 | Axis | Where it is defined | Current value | Meaning |
 |---|---|---|---|
-| Protocol version | Response to `$501;#` (`protocol_wrapper.cpp`) | `2;2` (major 2, minor 2) | Version of the **wire contract** described in this document. It was bumped to 2.1 with the read-only API and to 2.2 with transactional PID. |
-| Firmware build version | `VERSION` constant in `esp32_firmware.ino` | `2.4.0` | Version of the **firmware build**. It is shown on the OLED / startup output, but it is **not** transmitted over UART — `$501` reports the protocol version, not the build. |
+| Protocol version | Response to `$501;#` (`protocol_wrapper.cpp`) | `2;3` (major 2, minor 3) | Version of the **wire contract** described in this document. Bumped to 2.1 with the read-only API, to 2.2 with transactional PID and to 2.3 with the read-only I2C diagnostics (`$405`). |
+| Firmware build version | `VERSION` constant in `esp32_firmware.ino` | `2.4.0` | Version of the **firmware build**. It is shown on the OLED / startup output, but it is **not** transmitted over UART — `$501` reports the protocol version, not the build. The value was inherited from an earlier commit on `main` and deliberately left unchanged, so it does not describe the v2 work of this branch. |
 | Documentation revision | Section headings in `esp_firmware/README.md`, entries in `esp_firmware/CHANGELOG.rst` | README up to v2.3.3; CHANGELOG last numbered entry 2.2.0 (2026-10-25) plus an «Unreleased» section covering the v2 line | History of the incremental firmware/protocol work. |
 
-Known inconsistencies, recorded rather than silently resolved:
+Resolved in this branch (2026-11-11, ADR-015):
 
-1. **The source comment contradicts the emitted value.** The firmware emits `$501;2;2;#`, but the comment on the same source line says `// major=2, minor=1`. The emitted value is authoritative; the comment is stale.
-2. **The firmware build version does not reflect the v2 work in this branch.** `VERSION = "2.4.0"` was inherited from an earlier commit on `main` and was not bumped while the protocol v2 line was developed. Consequently "2.4.0", "2.2" and "v2.3.3" refer to three different axes and must not be compared directly.
-3. **The protocol version was not bumped for v2.3.x features.** The read-only I2C snapshot (`405`) was added in the v2.3.3 documentation revision, while `$501` still reports `2;2`.
+1. **The source comment contradicted the emitted value.** The firmware used to emit `$501;2;2;#` while the comment on the same source line said `// major=2, minor=1`. The comment now matches the frame, and `tools/ci/guard.py` fails the build if the two diverge again.
+2. **The protocol version was not bumped for the v2.3.x features.** The read-only I2C snapshot (`405`) was added while `$501` still reported `2;2`. The version is now `2;3`, so a host can tell from `$501` that the device implements the v2.3 diagnostics.
 
-Practical consequence for integrators: to identify what is running on a device, query `$501;#` — this yields the protocol contract version only. There is currently **no way to read the firmware build version over UART**, so an on-device build cannot be confirmed from the Jetson side. Aligning the three axes (or documenting them explicitly as independent) is an open decision recorded in `docs/ai/decisions.md` (ADR-015).
+Accepted as is (decision of the owner, 2026-11-11):
+
+3. **The firmware build version does not reflect the v2 work in this branch.** `VERSION = "2.4.0"` was inherited from an earlier commit on `main`. The build axis and the protocol axis are deliberately kept apart, so "2.4.0", "2;3" and "v2.3.3" refer to three different axes and must not be compared directly. The value is not bumped until the v2 line is released as a numbered firmware version (until then it lives in the «Unreleased» section of the changelog).
+
+Practical consequence for integrators: to identify what is running on a device, query `$501;#` — this yields the protocol contract version only. There is currently **no way to read the firmware build version over UART**, so an on-device build cannot be confirmed from the Jetson side. The three axes and the decision to keep them independent are recorded in `docs/ai/decisions.md` (ADR-015).

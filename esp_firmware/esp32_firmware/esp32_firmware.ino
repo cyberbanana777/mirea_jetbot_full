@@ -7,6 +7,10 @@
   @date 28.10.2026
   @version 2.4.0
 */
+// Firmware build version (shown on the OLED / startup output). It is NOT the
+// protocol version: the protocol version is reported over UART in $501
+// (see protocol_wrapper.cpp). The two axes are intentionally independent,
+// see esp_firmware/PROTOCOL.md, section "Versioning" (ADR-015).
 const char *VERSION = "2.4.0";
 
 #include <Arduino.h>

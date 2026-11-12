@@ -10,15 +10,18 @@ The project carries **three independent version axes**; they are not comparable 
 
 | Axis | Where | Current value |
 |---|---|---|
-| Protocol version | response to `$501;#` | `2;2` (major 2, minor 2) |
+| Protocol version | response to `$501;#` | `2;3` (major 2, minor 3) |
 | Firmware build version | `VERSION` constant in `esp32_firmware/esp32_firmware.ino` | `2.4.0` — shown on the OLED, **not** transmitted over UART |
 | Documentation revision | headings below and `CHANGELOG.rst` | this README covers up to v2.3.3; `CHANGELOG.rst` has an «Unreleased» section for the v2 line, and its last numbered entry is 2.2.0 (2026-10-25) |
 
-Known inconsistencies, recorded rather than silently resolved:
+Resolved in this branch (2026-11-11, ADR-015):
 
-- the firmware emits `$501;2;2;#`, but the comment on the same source line still says `// major=2, minor=1` — the emitted value is authoritative, the comment is stale;
-- `VERSION = "2.4.0"` was inherited from an earlier commit on `main` and was **not** bumped while the protocol v2 line was developed here, so it does not describe the v2 work in this branch;
-- the protocol version was not bumped for the v2.3.x features, so `$501` still reports `2;2` although `$405` (read-only I2C snapshot) exists.
+- the firmware emitted `$501;2;2;#` while the comment on the same source line said `// major=2, minor=1` — the comment now matches the frame, and `tools/ci/guard.py` fails the build if the two diverge again;
+- the protocol version was not bumped for the v2.3.x features, so `$501` still reported `2;2` although `$405` (read-only I2C snapshot) existed — the version is now `2;3`, and the bench suite checks the answer.
+
+Accepted as is (decision of the owner, 2026-11-11):
+
+- `VERSION = "2.4.0"` was inherited from an earlier commit on `main` and was **not** bumped while the protocol v2 line was developed here, so it does not describe the v2 work in this branch. The build axis and the protocol axis are kept apart on purpose; the value will be bumped when the v2 line is released as a numbered firmware version.
 
 **ROS 2 bridge migration is finished.** The working `serial_bridge_cpp` package at the repository root is on protocol v2: it emits `$101;v;w;#` for `/cmd_vel` and accepts feedback types `301` (odometry) and `202` (PID). The v2 implementation was developed in a separate copy under `esp_firmware/serial_bridge_cpp_reference/`, then merged into the working package; the copy was removed, because it declared the same package name `serial_bridge_cpp` and would have collided with the working package.
 

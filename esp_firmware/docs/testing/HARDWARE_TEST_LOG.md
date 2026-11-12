@@ -108,7 +108,7 @@ identical in all of them: `[0.951, 5.475, 0.0, 1.426, 10.009, 0.0]`.
 **What these runs do not prove.** The firmware build is not identified: the
 commit and the build options were not recorded, and every run reports the
 protocol version as `2;0` (`$501`), whereas the current firmware emits
-`$501;2;2;#`. The runs therefore validate an **older** build and must not be
+`$501;2;3;#`. The runs therefore validate an **older** build and must not be
 cited as validation of the current firmware. The suite itself states its
 limits in every report (verbatim from the JSON): no physical PWM measurement,
 host receive timestamps do not measure ESP32 scheduler jitter, no NVS writes

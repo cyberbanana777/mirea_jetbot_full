@@ -13,6 +13,10 @@ from client import Client
 
 # Only permitted outbound IDs: STOP and read-only PID request.
 ALLOWED_TX_IDS = {103, 202, 211, 402, 405, 501}
+
+# Expected answer to $501;# — the wire contract version of the flashed firmware.
+# Must match protocol_wrapper.cpp; tools/ci/guard.py checks that both agree.
+EXPECTED_PROTOCOL_VERSION = (2.0, 3.0)
 MALFORMED = [
     ('unknown_id', b'$999;#'),
     ('non_numeric_id', b'$abc;#'),
@@ -92,7 +96,7 @@ def transactional_checks(dev, pid_before):
 def run_suite(dev, duration, rows, malformed=True):
     results = {}
     info = query_frame(dev, 501, 2)
-    results['UART-INFO-001'] = {'status': 'PASS' if info == [2.0, 2.0] else 'FAIL', 'version': info}
+    results['UART-INFO-001'] = {'status': 'PASS' if info == list(EXPECTED_PROTOCOL_VERSION) else 'FAIL', 'version': info}
     snapshot_before = query_frame(dev, 402, 7)
     results['UART-DIAG-001'] = {'status': 'PASS' if snapshot_before is not None and all(math.isfinite(x) for x in snapshot_before) else 'FAIL', 'snapshot': snapshot_before, 'fields': ['uptime_ms', 'accepted', 'rejected', 'watchdog_stops', 'stopped', 'ina_ok', 'pwm_ok']}
     i2c = query_frame(dev, 405, 12)

@@ -78,7 +78,10 @@ void speedWindowPublish(int min_edges, int align) {
 
 // Numeric-only frames maintain compatibility with the strict Python decoder.
 void deviceInfoPublish() {
-    static const char msg[] = "$501;2;2;#\r\n"; // major=2, minor=1
+    // Protocol version: major=2, minor=3 (2.1 read-only API, 2.2 transactional PID,
+    // 2.3 read-only I2C diagnostics). This is the wire contract version, not the
+    // firmware build version (VERSION in esp32_firmware.ino).
+    static const char msg[] = "$501;2;3;#\r\n"; // major=2, minor=3
     if (Serial.availableForWrite() >= (int)(sizeof(msg) - 1))
         Serial.write((const uint8_t*)msg, sizeof(msg) - 1);
 }

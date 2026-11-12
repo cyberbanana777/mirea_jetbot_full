@@ -11,6 +11,10 @@
             кадра в рабочем коде входит в контракт; $6 (отдельный канал
             Serial1) встречается только в своём модуле.
   comments  wire-ID в комментариях command_parser.h совпадают с decodeCommand.
+  version   версия протокола в кадре $501 (protocol_wrapper.cpp) совпадает с
+            комментарием на той же строке, со строкой «Protocol version» в
+            таблицах «Versioning» (PROTOCOL.md, esp_firmware/README.md), с
+            EXPECTED_PROTOCOL_VERSION в стенде и с моком стенда.
   hygiene   в индексе git нет артефактов сборки и результатов прогонов.
   paths     нет ссылок на пути, удалённые при чистке репозитория (Этап 5).
 
@@ -33,6 +37,13 @@ PARSER_CPP = 'esp_firmware/esp32_firmware/command_parser.cpp'
 PARSER_H = 'esp_firmware/esp32_firmware/command_parser.h'
 FIRMWARE_DIR = 'esp_firmware/esp32_firmware'
 
+# Версия протокола ($501) дублируется в нескольких местах — проверяем,
+# что копии не разъезжаются.
+PROTOCOL_WRAPPER = 'esp_firmware/esp32_firmware/protocol_wrapper.cpp'
+FIRMWARE_README = 'esp_firmware/README.md'
+HARDWARE_SUITE = 'esp_firmware/tools/uart_bench/hardware_suite.py'
+HARDWARE_SUITE_TEST = 'esp_firmware/tools/uart_bench/test_hardware_suite.py'
+
 TABLE_TO_ESP = 'Jetson -> ESP32'
 TABLE_FROM_ESP = 'ESP32 -> Jetson'
 
@@ -54,6 +65,13 @@ NEGATIVE_FRAME_FILES = (
 REMOVED_PATHS = ('esp32_firmware_old', 'Speed_for_PID_test_speed')
 
 FRAME_ID_RE = re.compile(r'\$(\d{1,3})(?=[;#])')
+
+VERSION_FRAME_RE = re.compile(r'"\$501;(\d+);(\d+);#')
+VERSION_COMMENT_RE = re.compile(r'//\s*major\s*=\s*(\d+)\s*,\s*minor\s*=\s*(\d+)')
+VERSION_ROW_RE = re.compile(r'^\|\s*Protocol version\s*\|[^|]*\|\s*`(\d+);(\d+)`')
+VERSION_CONST_RE = re.compile(
+    r'EXPECTED_PROTOCOL_VERSION\s*=\s*\(\s*(\d+)(?:\.0+)?\s*,\s*(\d+)(?:\.0+)?\s*\)')
+VERSION_MOCK_RE = re.compile(r'501\s*:\s*(\([^)]*\)|[A-Za-z_][A-Za-z_0-9]*)')
 
 
 def git(*args):
@@ -198,6 +216,115 @@ def check_comments():
     return errors
 
 
+def check_version():
+    """Версия протокола в $501 должна совпадать во всех копиях.
+
+    Авторитетный источник — кадр в ``protocol_wrapper.cpp``. Проверяются:
+      * комментарий ``// major=X, minor=Y`` на той же строке;
+      * строка «Protocol version» в таблице «Versioning» (PROTOCOL.md и
+        esp_firmware/README.md);
+      * константа ``EXPECTED_PROTOCOL_VERSION`` в стенде;
+      * мок ответа ``$501`` в тесте стенда — только через эту константу.
+
+    Отсутствие любого из источников — ошибка: иначе переименование строки или
+    реформат таблицы отключили бы проверку молча.
+    """
+    errors = []
+
+    wrapper = read_text(PROTOCOL_WRAPPER)
+    if wrapper is None:
+        return ['%s: файл не найден' % PROTOCOL_WRAPPER]
+
+    frames = []
+    for number, line in enumerate(wrapper.splitlines(), start=1):
+        if '"$501;' not in line:
+            continue
+        frame = VERSION_FRAME_RE.search(line)
+        if not frame:
+            errors.append('%s:%d: кадр $501 не распознан' % (PROTOCOL_WRAPPER, number))
+            continue
+        comment = VERSION_COMMENT_RE.search(line)
+        if not comment:
+            errors.append('%s:%d: на строке с кадром $501 нет комментария '
+                          '«// major=X, minor=Y»' % (PROTOCOL_WRAPPER, number))
+            comment = None
+        else:
+            comment = (int(comment.group(1)), int(comment.group(2)))
+        frames.append((number, (int(frame.group(1)), int(frame.group(2))), comment))
+    if not frames:
+        errors.append('%s: не найден кадр $501' % PROTOCOL_WRAPPER)
+        return errors
+    if len(frames) > 1:
+        errors.append('%s: найдено несколько кадров $501 (строки %s)'
+                      % (PROTOCOL_WRAPPER, ', '.join(str(f[0]) for f in frames)))
+        return errors
+
+    line_no, frame, comment = frames[0]
+    if comment is not None and frame != comment:
+        errors.append('%s:%d: комментарий «major=%d, minor=%d» не совпадает с '
+                      'кадром «$501;%d;%d;#»'
+                      % (PROTOCOL_WRAPPER, line_no, comment[0], comment[1],
+                         frame[0], frame[1]))
+
+    for path in (PROTOCOL_MD, FIRMWARE_README):
+        text = read_text(path)
+        if text is None:
+            errors.append('%s: файл не найден' % path)
+            continue
+        rows = [m for m in (VERSION_ROW_RE.match(line) for line in text.splitlines())
+                if m]
+        if not rows:
+            errors.append('%s: не найдена строка «| Protocol version | ... | `N;M` |»'
+                          % path)
+            continue
+        if len(rows) > 1:
+            errors.append('%s: в таблице версий несколько строк «Protocol version»'
+                          % path)
+            continue
+        doc = (int(rows[0].group(1)), int(rows[0].group(2)))
+        if doc != frame:
+            errors.append('%s: версия протокола «%d;%d» не совпадает с кадром '
+                          '«$501;%d;%d;#» в %s'
+                          % (path, doc[0], doc[1], frame[0], frame[1],
+                             PROTOCOL_WRAPPER))
+
+    suite = read_text(HARDWARE_SUITE)
+    if suite is None:
+        errors.append('%s: файл не найден' % HARDWARE_SUITE)
+    else:
+        const = VERSION_CONST_RE.search(suite)
+        if not const:
+            errors.append('%s: не найдена константа EXPECTED_PROTOCOL_VERSION'
+                          % HARDWARE_SUITE)
+        else:
+            bench = (int(const.group(1)), int(const.group(2)))
+            if bench != frame:
+                errors.append('%s: EXPECTED_PROTOCOL_VERSION = %d;%d не совпадает '
+                              'с кадром «$501;%d;%d;#» в %s'
+                              % (HARDWARE_SUITE, bench[0], bench[1],
+                                 frame[0], frame[1], PROTOCOL_WRAPPER))
+
+    mock = read_text(HARDWARE_SUITE_TEST)
+    if mock is None:
+        errors.append('%s: файл не найден' % HARDWARE_SUITE_TEST)
+    else:
+        imports = [line for line in mock.splitlines()
+                   if 'from hardware_suite import' in line]
+        if not imports:
+            errors.append('%s: нет импорта из hardware_suite' % HARDWARE_SUITE_TEST)
+        elif 'EXPECTED_PROTOCOL_VERSION' not in imports[0]:
+            errors.append('%s: ожидается импорт EXPECTED_PROTOCOL_VERSION из '
+                          'hardware_suite' % HARDWARE_SUITE_TEST)
+        payload = VERSION_MOCK_RE.search(mock)
+        if not payload:
+            errors.append('%s: не найден мок ответа $501' % HARDWARE_SUITE_TEST)
+        elif payload.group(1) != 'EXPECTED_PROTOCOL_VERSION':
+            errors.append('%s: мок ответа $501 использует литерал «%s» — версия '
+                          'должна браться из EXPECTED_PROTOCOL_VERSION'
+                          % (HARDWARE_SUITE_TEST, payload.group(1)))
+    return errors
+
+
 ARTIFACT_PATTERNS = (
     (re.compile(r'\.o$'), 'объектный файл сборки'),
     (re.compile(r'\.diff$'), 'diff-файл'),
@@ -242,6 +369,7 @@ def check_paths():
 CHECKS = {
     'ids': check_ids,
     'comments': check_comments,
+    'version': check_version,
     'hygiene': check_hygiene,
     'paths': check_paths,
 }
