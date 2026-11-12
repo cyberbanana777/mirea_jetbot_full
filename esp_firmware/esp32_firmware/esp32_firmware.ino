@@ -214,14 +214,12 @@ StartupService startupService(startupContext);
 
 
 /**
-* @brief Преобразет тики в частоту вращения (об/с)
-* @param ticks - счётчик тактов из прерываний
-* @param dir - направеление. Может быть 'r', 'l'. При 'l'  происходит инвертирование значения,
-необходиомое для нормальной работы логики. Чтобы при движении вперёд или назад
-знаки угловых скоростей колёс были одинаковые
-* @return result, обороты в секунду типа float32_t.
-*/
-// The 100 Hz control step and 50 Hz odometry step live in ControlLoopService.
+ * @brief Открыто ли окно обмена по I²C до следующего шага управления.
+ * @details Истинно, когда до следующего шага управления 100 Гц осталось больше
+ * I2C_WINDOW_MIN_US (4 мс): обмен по I²C в этом окне не задерживает шаг
+ * управления. Расчёт окна — в ControlScheduler.
+ * @return true, если обмен по I²C разрешён в текущем шаге цикла.
+ */
 bool i2cWindowOpen()
 {
   return ControlScheduler::i2cWindowOpen(control_next_us, I2C_WINDOW_MIN_US);
@@ -243,6 +241,7 @@ void loop()
 
   unsigned long now = micros();
 
+  // The 100 Hz control step and 50 Hz odometry step live in ControlLoopService.
   // Контур скорости: каждые CONTROL_PERIOD_US (10 мс, 100 Гц)
   if (ControlScheduler::controlDue(now, control_next_us, CONTROL_PERIOD_US))
   {

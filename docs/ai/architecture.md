@@ -112,8 +112,8 @@ Python-кодек протокола и аппаратные скрипты), `t
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│ 5. Композиционный корень         esp32_firmware.ino (284 стр.)        │
-│    глобальные объекты (41-52), setup() (226), loop() (232)           │
+│ 5. Композиционный корень         esp32_firmware.ino (287 стр.)        │
+│    глобальные объекты (43-56), setup() (228), loop() (234)           │
 ├───────────────────────────────────────────────────────────────────────┤
 │ 4. Сервисы (не владеют состоянием, получают контекст по ссылке)      │
 │    SerialService · SafetyManager · ControlLoopService ·               │
@@ -135,15 +135,15 @@ Python-кодек протокола и аппаратные скрипты), `t
 **Слой 3 (политики) — ключевое архитектурное решение.** `command_policy.h` и
 `safety_policy.h` не содержат обращений к оборудованию и глобальному состоянию,
 поэтому проверяются на хосте без ESP32. **[Код]** Проверка чистоты:
-`command_policy.h:6-47`, `safety_policy.h:6-10`.
+`command_policy.h:7-47`, `safety_policy.h:6-10`.
 
 ### 3.2. Композиционный корень
 
 `esp32_firmware.ino` — единственное место, где создаются глобальные объекты:
-`encoders`, `MotorController controller` (стр. 41), `INA219 INA(0x41)` (45),
-`FlashStorageManager flashStorage("Memory2")` (49), `DisplayManager display`
-(50), `SerialReceiver mainReceiver(Serial)` (51), `SerialReceiver
-jetsonReceiver(Serial1)` (52). **[Код]**
+`encoders`, `MotorController controller` (стр. 45), `INA219 INA(0x41)` (49),
+`FlashStorageManager flashStorage("Memory2")` (53), `DisplayManager display`
+(54), `SerialReceiver mainReceiver(Serial)` (55), `SerialReceiver
+jetsonReceiver(Serial1)` (56). **[Код]**
 
 Сервисы получают **невладеющие** контексты — структуры с ссылками на разделяемые
 объекты. Это устраняет скрытое глобальное состояние, но оставляет риск
@@ -153,21 +153,21 @@ jetsonReceiver(Serial1)` (52). **[Код]**
 
 ### 3.3. Порядок работы главного цикла
 
-`loop()` (`esp32_firmware.ino:232`) выполняет строго фиксированную последовательность:
+`loop()` (`esp32_firmware.ino:234`) выполняет строго фиксированную последовательность:
 **[Код]**
 
 | № | Действие | Строка | Период / условие |
 |---|---|---|---|
-| 1 | `serialService.poll()` — приём байтов в оба `SerialReceiver` | 236 | каждый проход |
-| 2 | `safetyManager.check()` — watchdog и fail-closed остановка | 238 | каждый проход |
-| 3 | Контур скорости | 243 | 100 Гц (`CONTROL_PERIOD_US = 10000`) |
-| 4 | Одометрия | 250 | 50 Гц (`odom_timer_timeout = 20000`) |
-| 5 | `serialService.processCommands()` — разбор и диспетчеризация команд | 256 | до 4 кадров за вызов |
-| 6 | `serialService.processSecondary()` — `$6;...` из Serial1 | 257 | при наличии кадра |
-| 7 | Выборка INA219 | ~261 | `update_voltage_timer_timeout = 200` мс |
-| 8 | `hardwareMonitor.checkI2CDevices()` | 269 | `I2C_CHECK_INTERVAL = 500` мс |
+| 1 | `serialService.poll()` — приём байтов в оба `SerialReceiver` | 238 | каждый проход |
+| 2 | `safetyManager.check()` — watchdog и fail-closed остановка | 240 | каждый проход |
+| 3 | Контур скорости | 248 | 100 Гц (`CONTROL_PERIOD_US = 10000`) |
+| 4 | Одометрия | 255 | 50 Гц (`odom_timer_timeout = 20000`) |
+| 5 | `serialService.processCommands()` — разбор и диспетчеризация команд | 259 | до 4 кадров за вызов |
+| 6 | `serialService.processSecondary()` — `$6;...` из Serial1 | 260 | при наличии кадра |
+| 7 | Выборка INA219 | ~266 | `update_voltage_timer_timeout = 200` мс |
+| 8 | `hardwareMonitor.checkI2CDevices()` | 272 | `I2C_CHECK_INTERVAL = 500` мс |
 | 9 | `display.update(...)` | ~278 | интервал дисплея |
-| 10 | `error_manager.setFault(!inaOk \|\| !pwmOk \|\| !oledOk \|\| lowBattery)` | 282 | каждый проход |
+| 10 | `error_manager.setFault(!inaOk \|\| !pwmOk \|\| !oledOk \|\| lowBattery)` | 285 | каждый проход |
 
 Порядок важен: проверка безопасности (2) идёт **до** разбора команд (5), поэтому
 команда, пришедшая в «небезопасном» состоянии, не может продлить окно
@@ -276,7 +276,7 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
    Nav2 / RViz / web_regulators_configurator ◄── raw frames (serial/feedback)
 ```
 
-**[Код]** Топики моста: `serial_bridge_cpp/src/serial_bridge_node.cpp:86-105`
+**[Код]** Топики моста: `serial_bridge_cpp/src/serial_bridge_node.cpp:91-110`
 (публикаторы `/odom`, `/PIDcoeffs`, `/sensors/wheel/left/speed`,
 `/sensors/wheel/right/speed`, `serial/text`, `serial/feedback`; подписки `/cmd_vel`
 и `serial/cmd`).
@@ -288,21 +288,23 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
 
 | Аспект | Реализация | **[Код]** |
 |---|---|---|
-| Поток чтения | отдельный `std::thread`, `port.read()` с таймаутом 100 мс, переподключение раз в `reconnect_period` (1 с) | `serial_bridge_node.cpp:107,146-166` |
-| Кадроразбор | `FrameParser` (`frame_parser.hpp`) — вырезает `$...#`, остальное — текстовые строки | `frame_parser.hpp:33-93` |
-| Разбор чисел | `strtod` + проверка «поле целиком число» + `errno == ERANGE` | `frame_parser.hpp:136-139` |
-| Преобразование в числа | `static_cast<int>(fields_[0])` — идентификатор кадра | `serial_bridge_node.cpp:228` |
-| `/cmd_vel` → UART | `snprintf("$1;%.3f;%.3f;#", linear.x, angular.z)` | `serial_bridge_node.cpp:124-130` |
-| Таймер простоя `/cmd_vel` | **отсутствует** | `serial_bridge_node.cpp` (нет таймера) |
+| Поток чтения | отдельный `std::thread`, `port.read()` с таймаутом 100 мс, переподключение раз в `reconnect_period` (1 с) | `serial_bridge_node.cpp:74-75,118,204-230` |
+| Кадроразбор | `FrameParser` (`frame_parser.hpp`) — вырезает `$...#`, остальное — текстовые строки | `frame_parser.hpp:32-116` |
+| Разбор чисел | `strtod` + проверка «поле целиком число» + `errno == ERANGE` + `isfinite` | `frame_parser.hpp:136-141` |
+| Преобразование в числа | `static_cast<int>(fields_[0])` — идентификатор кадра | `serial_bridge_node.cpp:296` |
+| `/cmd_vel` → UART | `format_twist()` → `snprintf("$101;%.3f;%.3f;#", linear, angular)` | `protocol.hpp:88-97`, `serial_bridge_node.cpp:135-148` |
+| Таймер простоя `/cmd_vel` | **реализован**: параметр `cmd_vel_timeout` (0.5 с), таймер 100 мс, при простое шлёт `$103` | `serial_bridge_node.cpp:76-79,112-115,167-192` |
 
-**Отсутствие таймера `/cmd_vel`** подтверждает запись в корневом `IMPROVEMENTS.md`
-(«Таймаут `/cmd_vel` в `serial_bridge_cpp`»). **[Код]+[Док]**
+Таймер простоя `/cmd_vel` **реализован**: при молчании дольше `cmd_vel_timeout`
+(по умолчанию 0.5 с) мост один раз шлёт `$103` — программную остановку, которую
+не продлевает watchdog прошивки. Запись в корневом `IMPROVEMENTS.md`
+(«Таймаут `/cmd_vel` в `serial_bridge_cpp`») помечена как выполненная. **[Код]+[Док]**
 
 ### 4.3. Конфигураторы и вспомогательные инструменты
 
 - `web_regulators_configurator` — веб-UI на `http://<IP>:8080`, работает на роботе.
   Публикует в `/low_level/serial/cmd`, читает `/low_level/serial/feedback`.
-  `web_regulators_configurator/web_regulators_configurator/node.py:64-65,85,143`.
+  `web_regulators_configurator/web_regulators_configurator/node.py:64-65,85,118-152`.
   **[Код]**
 - `simple_PID_configurator` — набор GUI (Tkinter / PySide2) и ROS-узел; публиковал в
   `/low_level/serial/cmd`. **Удалён в Этапе 2** (ADR-017): работал по протоколу v1,
@@ -332,7 +334,7 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
 
 ```
 /cmd_vel (Twist)
-  → serial_bridge_node::on_cmd_vel            serial_bridge_node.cpp:124
+  → serial_bridge_node::on_cmd_vel            serial_bridge_node.cpp:135-148
   → "$101;v;w;#"                              [v2-формат]
   → UART
   → SerialReceiver::update                    serial_receiver.cpp:15
@@ -351,8 +353,8 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
 энкодеры → Encoders → SpeedEstimator → ControlLoopService::controlStep (100 Гц)
   → Odometry (DiffDriveOdometry) → odometryStep (50 Гц)
   → odomPublish → "$301;x;y;h;v;w;vl;vr;#"   protocol_wrapper.cpp:4
-  → UART → FrameParser → handle_frame        serial_bridge_node.cpp:216
-  → /odom + TF + /sensors/wheel/*/speed       serial_bridge_node.cpp:229-232
+  → UART → FrameParser → handle_frame        serial_bridge_node.cpp:217,274
+  → /odom + TF + /sensors/wheel/*/speed       serial_bridge_node.cpp:336-357
 ```
 
 ### 5.3. Конфигурация регуляторов
@@ -369,7 +371,7 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
 ## 6. Контракт протокола v2
 
 Формат: ASCII `$<id>;<arg1>;...;#`, допускается CR/LF после `#`. Аргументов не
-более 7 (`command_parser.cpp:48`). Контрольной суммы нет. **[Код]**
+более 7 (`command_parser.cpp:52`). Контрольной суммы нет. **[Код]**
 
 Диапазоны ID (`command_parser.cpp:decodeCommand`, `command_parser.h`): **[Код]**
 
@@ -382,7 +384,7 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
 | `5xx` | метаданные протокола, ACK/NACK | 501 REQUEST_INFO, 502 ACK, 503 NACK |
 
 Прочие ID → `UNKNOWN` → кадр отбрасывается и учитывается в `rejected`.
-**[Код]** `command_parser.cpp:32`, `serial_service.cpp:14-18`.
+**[Код]** `command_parser.cpp:30,45-46`, `serial_service.cpp:14-18`.
 
 Согласованный эталон кодеков — `esp_firmware/tools/uart_bench/protocol.py`
 (`IDS`, `EXPECTED_RX_FIELDS`, `MAX_FRAME_BYTES = 192`). **[Код]**
@@ -398,7 +400,7 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
    минимума, нечисловое напряжение) немедленно ведёт к нулевому PWM.
    `safety_policy.h:6-10`, `safety_manager.cpp:6-10`. **[Код]**
 2. **Проверка безопасности до обработки команды.** `safetyManager.check()` идёт
-   раньше `serialService.processCommands()` в цикле. `esp32_firmware.ino:238,256`.
+   раньше `serialService.processCommands()` в цикле. `esp32_firmware.ino:240,259`.
    **[Код]**
 3. **Watchdog продлевается только успешно валидированными motion-командами.**
    `serial_service.cpp:14-29`. **[Код]**
@@ -424,7 +426,7 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
 
 ---
 
-## 8. Известные архитектурные разрывы (по состоянию `base_commit`)
+## 8. Известные архитектурные разрывы (по состоянию ветки `fix/esp32_firmware`)
 
 Полный реестр с приоритетами и планом — в `docs/ai/project-state.md`. Здесь —
 краткий перечень архитектурно значимого.
@@ -437,12 +439,14 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
    (`esp_firmware/COLCON_IGNORE`) и имела то же имя пакета `serial_bridge_cpp`.
    **Закрыто в Этапе 2:** копия удалена, рабочий мост переведён на v2, добавлен
    сквозной host-тест «мост ↔ прошивка». **[Код]**
-2. **Отсутствие CI** (нет `.github/`): ни сборка, ни тесты не запускаются
-   автоматически. **[Код]**
+2. **Отсутствие CI** — **закрыто**: добавлен `.github/workflows/ci.yml` с четырьмя
+   job (`host-tests`, `python-tests`, `protocol-guard`, `firmware-syntax`).
+   ESP32-сборка в CI по-прежнему отсутствует: блокер — библиотека `uPID` (R-12). **[Код]**
 3. **Осиротевшие тесты.** *Было:* `esp_firmware/tests/test_protocol_v2.cpp` и
    `test_bridge_v2.cpp` не были подключены ни к Makefile, ни к CMake, ни к скриптам.
    **Частично закрыто в Этапе 2:** оба подключены к `esp_firmware/tools/host_test/Makefile`
-   (цель `test_protocol`), добавлен `test_end_to_end_v2.cpp`; CI (`.github/`) отсутствует.
+   (цель `test_protocol`), добавлен `test_end_to_end_v2.cpp`; CI (`.github/workflows/ci.yml`)
+   запускает их в job `host-tests`.
    **[Код]**
 4. **Разделение владения состоянием на уровне сервисов.** Контексты не владеют
    объектами; инварианты поддерживаются соглашениями, а не типами. **[Код]**
@@ -458,6 +462,7 @@ serial_bridge_cpp::SerialBridgeNode ──UART──► ESP32
 | `docs/ai/decisions.md` | принятые архитектурные решения с обоснованием и статусом |
 | `docs/ai/project-state.md` | состояние проекта, риски, готовность к рефакторингу, план |
 | `esp_firmware/PROTOCOL.md` | контракт UART-протокола v2 |
+| `esp_firmware/docs/audits/ARCHITECTURE_AUDIT_v2.4.0.md` | текущий аудит (A-01…A-16, доказательства file:line) |
 | `esp_firmware/docs/audits/ARCHITECTURE_AUDIT_v2.3.0.md` | предыдущий аудит (база v2.2.9, частично устарел) |
 | `esp_firmware/docs/testing/HARDWARE_TEST_LOG.md` | журнал аппаратных проверок |
 | `esp_firmware/TODO.md`, `IMPROVEMENTS.md`, `TODO.md` | бэклог задач (описание состояния v1) |
