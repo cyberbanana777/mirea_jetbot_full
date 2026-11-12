@@ -8,7 +8,7 @@ CXX ?= g++
 CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter
 STUBS = -Istubs -I$(UPID_DIR)
 
-all: test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue test_protocol_v2 test_bridge_v2 test_end_to_end_v2 test_frame_limits
+all: test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_glue test_protocol_v2 test_bridge_v2 test_end_to_end_v2 test_frame_limits test_policies
 
 sim_new: sim_new.cpp new_chain.h sim_run.h sim_common.h $(FW)/motor_controller.cpp $(FW)/speed_estimator.h stubs/stubs.cpp
 	$(CXX) $(CXXFLAGS) $(STUBS) -I$(FW) -I. sim_new.cpp $(FW)/motor_controller.cpp stubs/stubs.cpp -o $@
@@ -68,12 +68,20 @@ test_end_to_end_v2: $(TESTS)/test_end_to_end_v2.cpp $(FW)/command_parser.cpp $(F
 test_frame_limits: $(TESTS)/test_frame_limits.cpp $(FW)/serial_receiver.cpp $(FW)/serial_receiver.h $(FW)/command_parser.cpp $(FW)/command_parser.h $(FW)/command_policy.h
 	$(CXX) $(CXXFLAGS) -I$(TESTS)/stubs -I$(FW) $(TESTS)/test_frame_limits.cpp $(FW)/serial_receiver.cpp $(FW)/command_parser.cpp -o $@
 
+# Политики ввода и безопасности: чистая логика, uPID не нужна.
+# Закрывает дыру покрытия: mustStop, validPid, validRequestId,
+# validTransactionalPid, refreshesMotionWatchdog и validShape не были
+# проверены ни одним тестом (см. esp_firmware/tests/test_policies.cpp).
+test_policies: $(TESTS)/test_policies.cpp $(FW)/command_parser.cpp $(FW)/command_parser.h $(FW)/command_policy.h $(FW)/safety_policy.h
+	$(CXX) $(CXXFLAGS) -I$(TESTS)/stubs -I$(FW) $(TESTS)/test_policies.cpp $(FW)/command_parser.cpp -o $@
+
 # Только тесты протокола: библиотека uPID не нужна.
-test_protocol: test_protocol_v2 test_bridge_v2 test_end_to_end_v2 test_frame_limits
+test_protocol: test_protocol_v2 test_bridge_v2 test_end_to_end_v2 test_frame_limits test_policies
 	./test_protocol_v2
 	./test_bridge_v2
 	./test_end_to_end_v2
 	./test_frame_limits
+	./test_policies
 
 test: all
 	./test_glue
@@ -86,9 +94,10 @@ test: all
 	./test_bridge_v2
 	./test_end_to_end_v2
 	./test_frame_limits
+	./test_policies
 
 clean:
-	rm -f test_glue test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_protocol_v2 test_bridge_v2 test_end_to_end_v2 test_frame_limits trace_new.csv
+	rm -f test_glue test_estimator_aligned sim_ladrc sim_sync sim_floor sim_real sim_new sim_old sim_sweep test_estimator test_encoders_equiv test_protocol_v2 test_bridge_v2 test_end_to_end_v2 test_frame_limits test_policies trace_new.csv
 	# Объектные файлы — обычные артефакты сборки, они пересобираются
 	# автоматически (uPID для encoders.cpp не требуется) и в git не хранятся.
 	rm -f enc_new.o enc_old.o
